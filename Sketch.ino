@@ -10,6 +10,11 @@
 #include <Preferences.h>
 #include <Update.h>
 #include <SPI.h>
+#include <USB.h>
+#include <USBCDC.h>
+
+// Native USB-C port on ESP32-S3 uses USB CDC, not UART
+USBCDC USBSerial;
 
 // W5500 Ethernet pins for Waveshare ESP32-S3-ETH
 #define ETH_SPI_HOST    SPI3_HOST
@@ -27,7 +32,7 @@ Preferences preferences;
 String deviceSerial;
 
 // Firmware version
-String firmwareVersion = "v1.5.0";
+String firmwareVersion = "v1.5.1";
 
 // Network state
 bool ethConnected = false;
@@ -133,8 +138,8 @@ void addLog(String message) {
   if (debugLogs.length() > MAX_DEBUG_LOG_SIZE) {
     debugLogs = debugLogs.substring(debugLogs.length() - MAX_DEBUG_LOG_SIZE);
   }
-  Serial.print(timestamp);
-  Serial.println(message);
+  USBSerial.print(timestamp);
+  USBSerial.println(message);
 }
 
 // -------------------------------------------------------
@@ -269,28 +274,28 @@ void handleSerialCommand(String cmd) {
   addLog("Serial CMD: " + cmd);
 
   if (cmd == "FACTORY_RESET") {
-    Serial.println("[ONEFADER] Factory reset triggered via USB");
+    USBSerial.println("[ONEFADER] Factory reset triggered via USB");
     preferences.clear();
     delay(500);
     ESP.restart();
 
   } else if (cmd == "REBOOT") {
-    Serial.println("[ONEFADER] Reboot triggered via USB");
+    USBSerial.println("[ONEFADER] Reboot triggered via USB");
     delay(500);
     ESP.restart();
 
   } else if (cmd == "STATUS") {
-    Serial.println("[ONEFADER] STATUS");
-    Serial.println("[ONEFADER] FW:" + firmwareVersion);
-    Serial.println("[ONEFADER] NAME:" + myDeviceName);
-    Serial.println("[ONEFADER] UNIVERSE:" + String(universe));
-    Serial.println("[ONEFADER] ADDR:" + String(dmxStartAddress));
-    Serial.println("[ONEFADER] IP:" + getCurrentIP());
-    Serial.println("[ONEFADER] DHCP:" + String(useDHCP ? "1" : "0"));
-    Serial.println("[ONEFADER] STATIC_IP:" + staticIP.toString());
-    Serial.println("[ONEFADER] GATEWAY:" + gateway.toString());
-    Serial.println("[ONEFADER] SUBNET:" + subnet.toString());
-    Serial.println("[ONEFADER] DNS:" + dns.toString());
+    USBSerial.println("[ONEFADER] STATUS");
+    USBSerial.println("[ONEFADER] FW:" + firmwareVersion);
+    USBSerial.println("[ONEFADER] NAME:" + myDeviceName);
+    USBSerial.println("[ONEFADER] UNIVERSE:" + String(universe));
+    USBSerial.println("[ONEFADER] ADDR:" + String(dmxStartAddress));
+    USBSerial.println("[ONEFADER] IP:" + getCurrentIP());
+    USBSerial.println("[ONEFADER] DHCP:" + String(useDHCP ? "1" : "0"));
+    USBSerial.println("[ONEFADER] STATIC_IP:" + staticIP.toString());
+    USBSerial.println("[ONEFADER] GATEWAY:" + gateway.toString());
+    USBSerial.println("[ONEFADER] SUBNET:" + subnet.toString());
+    USBSerial.println("[ONEFADER] DNS:" + dns.toString());
 
   } else if (cmd.startsWith("SET_IP ")) {
     String params = cmd.substring(7);
@@ -299,7 +304,7 @@ void handleSerialCommand(String cmd) {
     int c3 = params.indexOf(',', c2 + 1);
 
     if (c1 < 0 || c2 < 0 || c3 < 0) {
-      Serial.println("[ONEFADER] ERROR: Bad SET_IP format");
+      USBSerial.println("[ONEFADER] ERROR: Bad SET_IP format");
       return;
     }
 
@@ -317,21 +322,21 @@ void handleSerialCommand(String cmd) {
     if (changed) {
       useDHCP = false;
       saveNetworkSettings();
-      Serial.println("[ONEFADER] IP config saved. Rebooting...");
+      USBSerial.println("[ONEFADER] IP config saved. Rebooting...");
       delay(500);
       ESP.restart();
     } else {
-      Serial.println("[ONEFADER] ERROR: No valid IP values parsed");
+      USBSerial.println("[ONEFADER] ERROR: No valid IP values parsed");
     }
 
   } else if (cmd == "LOG_START") {
-    Serial.println("[ONEFADER] Log streaming active");
+    USBSerial.println("[ONEFADER] Log streaming active");
 
   } else if (cmd == "LOG_STOP") {
-    Serial.println("[ONEFADER] Log streaming paused");
+    USBSerial.println("[ONEFADER] Log streaming paused");
 
   } else {
-    Serial.println("[ONEFADER] Unknown command: " + cmd);
+    USBSerial.println("[ONEFADER] Unknown command: " + cmd);
   }
 }
 
@@ -856,19 +861,19 @@ void setupWebServer() {
       if (!index) {
         addLog("Firmware Update: " + filename);
         if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-          Update.printError(Serial);
+          Update.printError(USBSerial);
           addLog("Update begin failed");
         }
       }
       if (Update.write(data, len) != len) {
-        Update.printError(Serial);
+        Update.printError(USBSerial);
         addLog("Firmware write failed");
       }
       if (final) {
         if (Update.end(true)) {
           addLog("Firmware Update OK");
         } else {
-          Update.printError(Serial);
+          Update.printError(USBSerial);
           addLog("Firmware Update Failed");
         }
       }
@@ -887,8 +892,12 @@ void setupWebServer() {
 // setup()
 // -------------------------------------------------------
 void setup() {
-  Serial.begin(115200);
+  USBSerial.begin(115200);
+  USB.begin();
   delay(1000);
+  // Wait for USB CDC to enumerate (native USB needs a moment)
+  unsigned long t = millis();
+  while (!USBSerial && millis() - t < 3000);
 
   pinMode(FADER_PIN, INPUT);
 
@@ -992,8 +1001,8 @@ void setup() {
 // -------------------------------------------------------
 void loop() {
   // ---- USB Serial command handler --------------------------------------
-  while (Serial.available()) {
-    char c = Serial.read();
+  while (USBSerial.available()) {
+    char c = USBSerial.read();
     if (c == '\n' || c == '\r') {
       if (serialBuffer.length() > 0) {
         handleSerialCommand(serialBuffer);
