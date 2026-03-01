@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OneFader — Device Tool</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+      color: #333;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 30px;
+      color: white;
+    }
+
+    .header h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: 10px;
+      text-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    }
+
+    .header .subtitle {
+      font-size: 1rem;
+      opacity: 0.9;
+    }
+
+    .header .subtitle a {
+      color: white;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(255,255,255,0.5);
+      transition: all 0.3s;
+    }
+
+    .header .subtitle a:hover {
+      border-bottom-color: white;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+      gap: 24px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(10px);
+      border-radius: 20px;
+      padding: 28px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.15);
+    }
+
+    .card-full {
+      grid-column: 1 / -1;
+    }
+
+    .card-header {
+      font-size: 1.4rem;
+      font-weight: 600;
+      margin-bottom: 20px;
+      color: #667eea;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Status pill */
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .status-pill.disconnected { background: #f1f5f9; color: #94a3b8; }
+    .status-pill.connecting   { background: #fef3c7; color: #d97706; }
+    .status-pill.connected    { background: #d1fae5; color: #059669; }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .status-pill.connecting .status-dot { animation: pulse 1s infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    /* Info grid */
+    .info-grid {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .info-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px;
+      background: #f8f9fa;
+      border-radius: 10px;
+      font-size: 0.9rem;
+    }
+
+    .info-label { font-weight: 600; color: #666; }
+    .info-value { color: #333; font-family: 'Courier New', monospace; font-size: 0.85rem; }
+
+    /* Forms */
+    .form-group { margin-bottom: 16px; }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: #555;
+      font-size: 0.9rem;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 12px 16px;
+      border: 2px solid #e0e0e0;
+      border-radius: 12px;
+      font-size: 1rem;
+      transition: all 0.3s;
+      background: white;
+      font-family: 'Courier New', monospace;
+    }
+
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    input[type="text"]::placeholder { color: #bbb; font-family: inherit; }
+
+    .ip-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    /* Buttons */
+    button {
+      width: 100%;
+      padding: 14px;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+    }
+
+    button:active  { transform: translateY(0); }
+
+    button:disabled {
+      background: #e0e0e0;
+      color: #aaa;
+      box-shadow: none;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .button-secondary {
+      background: linear-gradient(135deg, #64748b 0%, #475569 100%);
+      box-shadow: 0 4px 15px rgba(100, 116, 139, 0.4);
+    }
+
+    .button-secondary:hover { box-shadow: 0 6px 20px rgba(100, 116, 139, 0.6); }
+
+    .button-danger {
+      background: linear-gradient(135deg, #f87171 0%, #dc2626 100%);
+      box-shadow: 0 4px 15px rgba(248, 113, 113, 0.4);
+    }
+
+    .button-danger:hover { box-shadow: 0 6px 20px rgba(248, 113, 113, 0.6); }
+
+    .button-success {
+      background: linear-gradient(135deg, #34d399 0%, #059669 100%);
+      box-shadow: 0 4px 15px rgba(52, 211, 153, 0.4);
+    }
+
+    .button-success:hover { box-shadow: 0 6px 20px rgba(52, 211, 153, 0.6); }
+
+    /* Browser warning */
+    .browser-warning {
+      background: #fef3c7;
+      border: 1px solid #fbbf24;
+      border-radius: 12px;
+      padding: 14px 18px;
+      font-size: 0.9rem;
+      color: #92400e;
+      margin-bottom: 20px;
+      display: none;
+    }
+
+    .browser-warning.visible { display: block; }
+
+    /* Firmware */
+    .fw-version-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px;
+      background: #f8f9fa;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      margin-bottom: 10px;
+    }
+
+    .fw-version-row .info-value.highlight { color: #667eea; font-weight: 600; }
+
+    .fw-flash-area { display: none; margin-top: 4px; }
+    .fw-flash-area.visible { display: block; }
+
+    /* Logs */
+    .logs {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 16px;
+      border-radius: 12px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.8rem;
+      height: 250px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      line-height: 1.6;
+    }
+
+    .logs::-webkit-scrollbar { width: 8px; }
+    .logs::-webkit-scrollbar-track { background: #334155; border-radius: 4px; }
+    .logs::-webkit-scrollbar-thumb { background: #667eea; border-radius: 4px; }
+
+    .log-line   { margin-bottom: 2px; }
+    .log-time   { color: #475569; margin-right: 8px; }
+    .log-info    { color: #e2e8f0; }
+    .log-success { color: #34d399; }
+    .log-warn    { color: #fbbf24; }
+    .log-error   { color: #f87171; }
+    .log-device  { color: #a78bfa; }
+    .log-muted   { color: #64748b; font-style: italic; }
+
+    .log-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .log-header label { margin: 0; display: flex; align-items: center; gap: 8px; }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #475569;
+      display: inline-block;
+    }
+
+    .live-dot.active { background: #34d399; animation: pulse 1.5s infinite; }
+
+    .btn-clear {
+      background: none;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 4px 12px;
+      color: #64748b;
+      font-size: 0.75rem;
+      cursor: pointer;
+      width: auto;
+      box-shadow: none;
+      margin: 0;
+      transition: all 0.2s;
+    }
+
+    .btn-clear:hover { border-color: #f87171; color: #f87171; transform: none; box-shadow: none; }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+
+    .modal-overlay.visible { opacity: 1; pointer-events: all; }
+
+    .modal {
+      background: white;
+      border-radius: 20px;
+      padding: 36px;
+      max-width: 420px;
+      width: 90%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      transform: scale(0.95);
+      transition: transform 0.2s;
+    }
+
+    .modal-overlay.visible .modal { transform: scale(1); }
+
+    .modal-icon  { font-size: 2.5rem; margin-bottom: 14px; }
+    .modal-title { font-size: 1.3rem; font-weight: 700; margin-bottom: 10px; color: #333; }
+    .modal-desc  { font-size: 0.88rem; color: #666; line-height: 1.6; margin-bottom: 28px; }
+    .modal-actions { display: flex; gap: 12px; }
+    .modal-actions button { margin: 0; flex: 1; }
+
+    .btn-modal-cancel {
+      background: #f1f5f9 !important;
+      color: #64748b !important;
+      box-shadow: none !important;
+    }
+
+    .btn-modal-cancel:hover { background: #e2e8f0 !important; box-shadow: none !important; }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 28px;
+      right: 28px;
+      padding: 14px 20px;
+      border-radius: 12px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      z-index: 200;
+      transform: translateY(16px);
+      opacity: 0;
+      transition: all 0.3s;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    }
+
+    .toast.visible  { transform: translateY(0); opacity: 1; }
+    .toast.success  { background: #d1fae5; color: #065f46; }
+    .toast.error    { background: #fee2e2; color: #991b1b; }
+    .toast.warn     { background: #fef3c7; color: #92400e; }
+
+    @media (max-width: 768px) {
+      .grid { grid-template-columns: 1fr; }
+      .header h1 { font-size: 2rem; }
+      .ip-row { grid-template-columns: 1fr; }
+      .card-full { grid-column: 1; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>OneFader</h1>
+    <div class="subtitle">Device Tool — by <a href="https://netstage.io" target="_blank">netstage.io</a></div>
+  </div>
+
+  <div class="grid">
+
+    <!-- USB Connection — full width -->
+    <div class="card card-full">
+      <div class="card-header">🔌 USB Connection</div>
+
+      <div class="browser-warning" id="browserWarning">
+        ⚠️ This tool requires Chrome or Edge — Web Serial is not supported in Firefox or Safari.
+      </div>
+
+      <div class="status-row">
+        <div class="status-pill disconnected" id="statusPill">
+          <div class="status-dot"></div>
+          <span id="statusText">Disconnected</span>
+        </div>
+        <span class="info-value" id="infoPort" style="color:#aaa; font-size:0.85rem;">No device selected</span>
+      </div>
+
+      <div id="deviceInfoBlock" style="display:none;">
+        <div class="info-grid" style="grid-template-columns: repeat(auto-fit, minmax(160px,1fr));">
+          <div class="info-item">
+            <span class="info-label">Firmware</span>
+            <span class="info-value" id="infoFW">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Stream Name</span>
+            <span class="info-value" id="infoName">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">IP Address</span>
+            <span class="info-value" id="infoIP">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Universe</span>
+            <span class="info-value" id="infoUniverse">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top: 20px;">
+        <button id="btnConnect" onclick="connectSerial()">Connect to OneFader via USB-C</button>
+        <button id="btnDisconnect" class="button-secondary" style="display:none;" onclick="disconnectSerial()">Disconnect</button>
+      </div>
+    </div>
+
+    <!-- Firmware Update — full width -->
+    <div class="card card-full">
+      <div class="card-header">⚡ Firmware Update</div>
+
+      <div id="fwVersionBlock" style="display:none; margin-bottom:16px;">
+        <div class="fw-version-row">
+          <span class="info-label">Device version</span>
+          <span class="info-value" id="fwCurrent">—</span>
+        </div>
+        <div class="fw-version-row">
+          <span class="info-label">Latest release</span>
+          <span class="info-value highlight" id="fwLatest">—</span>
+        </div>
+        <div class="fw-version-row">
+          <span class="info-label">Released</span>
+          <span class="info-value" id="fwDate">—</span>
+        </div>
+        <div class="fw-version-row">
+          <span class="info-label">Asset</span>
+          <span class="info-value" id="fwAsset" style="font-size:0.78rem;">—</span>
+        </div>
+      </div>
+
+      <button id="btnCheckFW" onclick="checkFirmware()">Check for Latest Firmware</button>
+
+      <div class="fw-flash-area" id="fwFlashArea"></div>
+
+      <p style="font-size:0.82rem; color:#888; margin-top:6px; line-height:1.5;">
+        Fetches the latest release from GitHub and flashes directly over USB using ESP Web Tools.
+        Disconnect the serial monitor before flashing.
+      </p>
+
+      <div style="margin-top:16px; padding-top:16px; border-top:1px solid #e8e8f0;">
+        <label style="display:block; font-weight:600; color:#555; font-size:0.9rem; margin-bottom:10px;">
+          📁 Flash Custom .bin
+        </label>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <label for="customBinInput" style="
+            flex:1; min-width:200px; padding:12px 16px;
+            border:2px dashed #d0d0d0; border-radius:12px;
+            cursor:pointer; font-size:0.85rem; color:#888;
+            text-align:center; transition:all 0.2s;
+            display:block; margin:0;
+          " id="customBinLabel">
+            Choose .bin file…
+          </label>
+          <input type="file" id="customBinInput" accept=".bin" style="display:none;">
+          <button id="btnFlashCustom" onclick="flashCustomBin()" disabled style="
+            flex:0 0 auto; width:auto; padding:12px 20px; margin:0;
+            background:linear-gradient(135deg,#34d399 0%,#059669 100%);
+            box-shadow:0 4px 15px rgba(52,211,153,0.4);
+          ">
+            ⚡ Flash
+          </button>
+        </div>
+        <div id="customFlashArea" style="margin-top:10px;"></div>
+        <p style="font-size:0.78rem; color:#aaa; margin-top:6px; line-height:1.5;">
+          Select a locally compiled .bin and flash it directly — no GitHub release needed.
+        </p>
+      </div>
+    </div>
+
+    <!-- Factory Reset -->
+    <div class="card" id="cardReset" style="opacity:0.5; pointer-events:none;">
+      <div class="card-header">🗑️ Factory Reset</div>
+      <p style="font-size:0.88rem; color:#666; line-height:1.6; margin-bottom:20px;">
+        Clears all saved settings — network config, stream name, universe, and DMX address.
+        The device will reboot into its default state.
+      </p>
+      <button class="button-danger" onclick="confirmReset()">Factory Reset Device</button>
+    </div>
+
+    <!-- Reboot -->
+    <div class="card" id="cardReboot" style="opacity:0.5; pointer-events:none;">
+      <div class="card-header">🔄 Reboot</div>
+      <p style="font-size:0.88rem; color:#666; line-height:1.6; margin-bottom:20px;">
+        Restarts the device without clearing any settings. Useful if the device is
+        unresponsive or you need to apply network changes.
+      </p>
+      <button class="button-secondary" onclick="confirmReboot()">Reboot Device</button>
+    </div>
+
+    <!-- Set Static IP -->
+    <div class="card" id="cardIP" style="opacity:0.5; pointer-events:none;">
+      <div class="card-header">🌐 Set Static IP</div>
+      <p style="font-size:0.88rem; color:#666; line-height:1.6; margin-bottom:20px;">
+        Configure network settings directly over USB — useful when you can't reach the web UI.
+        Leave any field blank to keep its current value.
+      </p>
+      <div class="form-group">
+        <label>IP Address</label>
+        <input type="text" id="inputIP" placeholder="e.g. 192.168.1.100">
+      </div>
+      <div class="ip-row" style="margin-bottom:16px;">
+        <div>
+          <label>Gateway</label>
+          <input type="text" id="inputGW" placeholder="e.g. 192.168.1.1">
+        </div>
+        <div>
+          <label>Subnet</label>
+          <input type="text" id="inputSN" placeholder="e.g. 255.255.255.0">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>DNS</label>
+        <input type="text" id="inputDNS" placeholder="e.g. 8.8.8.8">
+      </div>
+      <button onclick="sendIPConfig()">Apply IP Settings</button>
+    </div>
+
+    <!-- Live Logs -->
+    <div class="card" id="cardLogs" style="opacity:0.5; pointer-events:none;">
+      <div class="card-header">📋 Serial Log</div>
+      <button id="btnToggleLogs" class="button-secondary" onclick="toggleLiveLogs()" style="margin-bottom:16px;">
+        Start Live Streaming
+      </button>
+      <div class="log-header">
+        <label>
+          <span class="live-dot" id="liveDot"></span>
+          Output
+        </label>
+        <button class="btn-clear" onclick="clearLogs()">Clear</button>
+      </div>
+      <div class="logs" id="logBody">
+        <div class="log-line"><span class="log-muted">Connect a OneFader device via USB-C to begin.</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+      <div class="modal-icon"  id="modalIcon">⚠️</div>
+      <div class="modal-title" id="modalTitle">Confirm</div>
+      <div class="modal-desc"  id="modalDesc">Are you sure?</div>
+      <div class="modal-actions">
+        <button class="btn-modal-cancel" onclick="closeModal()">Cancel</button>
+        <button class="button-danger" id="btnModalConfirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <!-- ESP Web Tools (Espressif official) -->
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+
+  <script>
+    // ── CONFIG — update to match your GitHub repo ────────────────────────────
+    const GITHUB_OWNER   = 'netstage-io';
+    const GITHUB_REPO    = 'onefader-firmware';
+    const BIN_ASSET_NAME = 'onefader.bin';
+    // ─────────────────────────────────────────────────────────────────────────
+
+    let port            = null;
+    let isConnected     = false;
+    let liveLogging     = false;
+    let deviceFWVersion = null;
+    let rxBuffer        = '';
+    let writer          = null;
+    let reader          = null;
+    let readLoopActive  = false;
+
+    // Browser check
+    if (!('serial' in navigator)) {
+      document.getElementById('browserWarning').classList.add('visible');
+      document.getElementById('btnConnect').disabled = true;
+      document.getElementById('btnConnect').textContent = 'Web Serial not supported — use Chrome or Edge';
+    }
+
+    // ── Serial ───────────────────────────────────────────────────────────────
+    async function connectSerial() {
+      try {
+        setStatus('connecting', 'Connecting...');
+        port = await navigator.serial.requestPort();
+        try {
+          await port.open({ baudRate: 115200 });
+        } catch (e) {
+          if (e.name !== 'InvalidStateError') throw e;
+        }
+
+        const info = port.getInfo();
+        document.getElementById('infoPort').textContent =
+          info.usbVendorId
+            ? `USB Serial (VID 0x${info.usbVendorId.toString(16).toUpperCase()})`
+            : 'USB Serial';
+
+        // Acquire BOTH locks immediately before starting the read loop.
+        // Web Serial requires both to be claimed before either is used —
+        // claiming them here prevents the "port locked" race condition.
+        writer = port.writable.getWriter();
+        reader = port.readable.getReader();
+        isConnected = true;
+
+        setStatus('connected', 'Connected');
+        document.getElementById('btnConnect').style.display    = 'none';
+        document.getElementById('btnDisconnect').style.display = 'block';
+        enableCards(true);
+        startReadLoop();
+        addLog('Connected to OneFader', 'success');
+        showToast('Connected', 'success');
+        setTimeout(() => sendCommand('STATUS'), 100);
+
+      } catch (err) {
+        setStatus('disconnected', 'Disconnected');
+        if (err.name !== 'NotSelectedError') {
+          addLog('Connection failed: ' + err.message, 'error');
+          showToast('Connection failed', 'error');
+        }
+      }
+    }
+
+    async function disconnectSerial() {
+      liveLogging = false;
+      updateLiveBtn();
+      isConnected = false;
+      readLoopActive = false;
+      try {
+        if (reader) { try { await reader.cancel(); reader.releaseLock(); } catch(e) {} reader = null; }
+        if (writer) { try { await writer.close();  writer.releaseLock(); } catch(e) {} writer = null; }
+        await new Promise(r => setTimeout(r, 50));
+        if (port)   { try { await port.close(); } catch(e) {} port = null; }
+      } catch (e) {}
+      isConnected     = false;
+      deviceFWVersion = null;
+      setStatus('disconnected', 'Disconnected');
+      document.getElementById('btnConnect').style.display      = 'block';
+      document.getElementById('btnDisconnect').style.display   = 'none';
+      document.getElementById('deviceInfoBlock').style.display = 'none';
+      document.getElementById('infoPort').textContent          = 'No device selected';
+      document.getElementById('liveDot').classList.remove('active');
+      enableCards(false);
+      addLog('Disconnected', 'warn');
+    }
+
+    async function startReadLoop() {
+      if (!reader) return;
+      readLoopActive = true;
+      const decoder = new TextDecoder();
+      try {
+        while (readLoopActive) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          rxBuffer += decoder.decode(value, { stream: true });
+          const lines = rxBuffer.split('\n');
+          rxBuffer = lines.pop();
+          for (const line of lines) {
+            const t = line.trim();
+            if (t) { parseStatusLine(t); addLog(t, 'device'); }
+          }
+        }
+      } catch (e) {
+        if (isConnected) addLog('Read error: ' + e.message, 'error');
+      }
+    }
+
+    async function sendCommand(cmd) {
+      if (!writer || !isConnected) { showToast('Not connected', 'error'); return false; }
+      try {
+        await writer.write(new TextEncoder().encode(cmd + '\n'));
+        addLog('→ ' + cmd, 'info');
+        return true;
+      } catch (e) {
+        addLog('Send error: ' + e.message, 'error');
+        return false;
+      }
+    }
+
+    // Parse STATUS response to populate device info chips
+    function parseStatusLine(line) {
+      const m = line.match(/\[ONEFADER\]\s+(\w+):(.+)/);
+      if (!m) return;
+      const [, key, val] = m;
+      document.getElementById('deviceInfoBlock').style.display = 'block';
+      if (key === 'FW')       { deviceFWVersion = val.trim(); document.getElementById('infoFW').textContent      = deviceFWVersion; updateFWCurrent(); }
+      if (key === 'NAME')     { document.getElementById('infoName').textContent     = val.trim(); }
+      if (key === 'IP')       { document.getElementById('infoIP').textContent       = val.trim(); }
+      if (key === 'UNIVERSE') { document.getElementById('infoUniverse').textContent = val.trim(); }
+    }
+
+    function updateFWCurrent() {
+      const el = document.getElementById('fwCurrent');
+      if (el && deviceFWVersion) el.textContent = deviceFWVersion;
+    }
+
+    // ── Custom .bin upload ───────────────────────────────────────────────────
+    const customBinInput = document.getElementById('customBinInput');
+    const customBinLabel = document.getElementById('customBinLabel');
+    const btnFlashCustom = document.getElementById('btnFlashCustom');
+
+    customBinInput.addEventListener('change', function() {
+      if (this.files && this.files[0]) {
+        const file = this.files[0];
+        customBinLabel.textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
+        customBinLabel.style.borderColor = '#667eea';
+        customBinLabel.style.color = '#667eea';
+        btnFlashCustom.disabled = false;
+      }
+    });
+
+    async function flashCustomBin() {
+      const file = customBinInput.files[0];
+      if (!file) { showToast('No file selected', 'warn'); return; }
+
+      btnFlashCustom.textContent = 'Preparing...';
+      btnFlashCustom.disabled = true;
+
+      try {
+        // Read file as ArrayBuffer then convert to base64 data URL for ESP Web Tools manifest
+        const arrayBuffer = await file.arrayBuffer();
+        const blob = new Blob([arrayBuffer], { type: 'application/octet-stream' });
+        const blobURL = URL.createObjectURL(blob);
+
+        const manifest = {
+          name: 'OneFader Custom',
+          version: 'custom',
+          builds: [{
+            chipFamily: 'ESP32-S3',
+            parts: [{ path: blobURL, offset: 0 }]
+          }]
+        };
+        const manifestURL = URL.createObjectURL(
+          new Blob([JSON.stringify(manifest)], { type: 'application/json' })
+        );
+
+        const area = document.getElementById('customFlashArea');
+        area.innerHTML = `
+          <esp-web-install-button manifest="${manifestURL}">
+            <button slot="activate" style="
+              width:100%; padding:12px; margin:0;
+              background:linear-gradient(135deg,#34d399 0%,#059669 100%);
+              color:white; border:none; border-radius:12px;
+              font-size:0.95rem; font-weight:600; cursor:pointer;
+              box-shadow:0 4px 15px rgba(52,211,153,0.4);
+            ">
+              ⚡ Flash ${file.name} to Device
+            </button>
+            <span slot="unsupported" style="color:#dc2626; font-size:0.85rem; display:block; margin-top:8px;">
+              Web Serial not supported — use Chrome or Edge.
+            </span>
+          </esp-web-install-button>
+        `;
+
+        addLog('Custom bin ready: ' + file.name, 'success');
+        showToast('Ready to flash — click the button above', 'success');
+
+      } catch (err) {
+        addLog('Custom bin error: ' + err.message, 'error');
+        showToast('Error: ' + err.message, 'error');
+      } finally {
+        btnFlashCustom.textContent = '⚡ Flash';
+        btnFlashCustom.disabled = false;
+      }
+    }
+
+    // ── Firmware update ──────────────────────────────────────────────────────
+    async function checkFirmware() {
+      const btn = document.getElementById('btnCheckFW');
+      btn.textContent = 'Checking GitHub...';
+      btn.disabled    = true;
+
+      try {
+        const res = await fetch(
+          `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
+        );
+        if (!res.ok) throw new Error(`GitHub API returned ${res.status}`);
+        const release = await res.json();
+
+        const asset = release.assets.find(a => a.name === BIN_ASSET_NAME);
+        if (!asset) throw new Error(`No file named "${BIN_ASSET_NAME}" in latest release`);
+
+        document.getElementById('fwVersionBlock').style.display = 'block';
+        document.getElementById('fwLatest').textContent =
+          release.tag_name;
+        document.getElementById('fwDate').textContent =
+          new Date(release.published_at).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+        document.getElementById('fwAsset').textContent =
+          asset.name + ' — ' + (asset.size / 1024).toFixed(1) + ' KB';
+        updateFWCurrent();
+
+        // Build a blob manifest for ESP Web Tools
+        const manifest = {
+          name: 'OneFader',
+          version: release.tag_name,
+          builds: [{
+            chipFamily: 'ESP32-S3',
+            parts: [{ path: asset.browser_download_url, offset: 0 }]
+          }]
+        };
+        const manifestURL = URL.createObjectURL(
+          new Blob([JSON.stringify(manifest)], { type: 'application/json' })
+        );
+
+        const area = document.getElementById('fwFlashArea');
+        area.classList.add('visible');
+        area.innerHTML = `
+          <esp-web-install-button manifest="${manifestURL}">
+            <button slot="activate" style="
+              width:100%; padding:14px; margin-top:4px; margin-bottom:0;
+              background:linear-gradient(135deg,#34d399 0%,#059669 100%);
+              color:white; border:none; border-radius:12px;
+              font-size:1rem; font-weight:600; cursor:pointer;
+              box-shadow:0 4px 15px rgba(52,211,153,0.4);
+            ">
+              ⚡ Flash ${release.tag_name} to Device
+            </button>
+            <span slot="unsupported" style="color:#dc2626; font-size:0.85rem; display:block; margin-top:8px;">
+              Web Serial not supported — use Chrome or Edge.
+            </span>
+          </esp-web-install-button>
+        `;
+
+        addLog('Latest firmware: ' + release.tag_name + ' (' + asset.name + ')', 'success');
+        showToast('Latest: ' + release.tag_name, 'success');
+
+      } catch (err) {
+        addLog('Firmware check failed: ' + err.message, 'error');
+        showToast('Failed: ' + err.message, 'error');
+      } finally {
+        btn.textContent = 'Check Again';
+        btn.disabled    = false;
+      }
+    }
+
+    // ── Actions ──────────────────────────────────────────────────────────────
+    function confirmReset() {
+      openModal('🗑️', 'Factory Reset',
+        'This will erase ALL saved settings — network config, stream name, universe, and DMX address. The device will reboot into its default state. This cannot be undone.',
+        async () => {
+          if (await sendCommand('FACTORY_RESET')) {
+            addLog('Factory reset sent — device rebooting...', 'warn');
+            showToast('Resetting...', 'warn');
+            setTimeout(disconnectSerial, 2000);
+          }
+        }
+      );
+    }
+
+    function confirmReboot() {
+      openModal('🔄', 'Reboot Device',
+        'The device will restart. All settings will be preserved.',
+        async () => {
+          if (await sendCommand('REBOOT')) {
+            addLog('Reboot sent — device restarting...', 'warn');
+            showToast('Rebooting...', 'warn');
+            setTimeout(disconnectSerial, 1500);
+          }
+        }
+      );
+    }
+
+    async function sendIPConfig() {
+      const ip  = document.getElementById('inputIP').value.trim();
+      const gw  = document.getElementById('inputGW').value.trim();
+      const sn  = document.getElementById('inputSN').value.trim();
+      const dns = document.getElementById('inputDNS').value.trim();
+
+      if (!ip && !gw && !sn && !dns) { showToast('Enter at least one value', 'warn'); return; }
+
+      const ipRx = /^(\d{1,3}\.){3}\d{1,3}$/;
+      for (const [lbl, v] of [['IP',ip],['Gateway',gw],['Subnet',sn],['DNS',dns]]) {
+        if (v && !ipRx.test(v)) { showToast('Invalid ' + lbl, 'error'); return; }
+      }
+
+      if (await sendCommand(`SET_IP ${ip||'_'},${gw||'_'},${sn||'_'},${dns||'_'}`)) {
+        addLog('IP config sent — device applying and rebooting...', 'success');
+        showToast('IP config sent', 'success');
+        setTimeout(disconnectSerial, 2000);
+      }
+    }
+
+    function toggleLiveLogs() {
+      liveLogging = !liveLogging;
+      updateLiveBtn();
+      document.getElementById('liveDot').classList.toggle('active', liveLogging);
+      addLog(liveLogging ? 'Live streaming active' : 'Live streaming paused',
+             liveLogging ? 'success' : 'muted');
+      sendCommand(liveLogging ? 'LOG_START' : 'LOG_STOP');
+    }
+
+    function updateLiveBtn() {
+      document.getElementById('btnToggleLogs').textContent =
+        liveLogging ? 'Stop Streaming' : 'Start Live Streaming';
+    }
+
+    // ── UI helpers ───────────────────────────────────────────────────────────
+    function setStatus(state, text) {
+      document.getElementById('statusPill').className = 'status-pill ' + state;
+      document.getElementById('statusText').textContent = text;
+    }
+
+    function enableCards(on) {
+      ['cardReset','cardReboot','cardIP','cardLogs'].forEach(id => {
+        const el = document.getElementById(id);
+        el.style.opacity       = on ? '1'   : '0.5';
+        el.style.pointerEvents = on ? 'all' : 'none';
+      });
+    }
+
+    function addLog(msg, type = 'info') {
+      const body = document.getElementById('logBody');
+      const time = new Date().toTimeString().slice(0, 8);
+      const line = document.createElement('div');
+      line.className = 'log-line';
+      line.innerHTML =
+        `<span class="log-time">${time}</span><span class="log-${type}">${esc(msg)}</span>`;
+      body.appendChild(line);
+      body.scrollTop = body.scrollHeight;
+      while (body.children.length > 300) body.removeChild(body.firstChild);
+    }
+
+    function clearLogs() { document.getElementById('logBody').innerHTML = ''; }
+    function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    function openModal(icon, title, desc, cb) {
+      document.getElementById('modalIcon').textContent  = icon;
+      document.getElementById('modalTitle').textContent = title;
+      document.getElementById('modalDesc').textContent  = desc;
+      document.getElementById('btnModalConfirm').onclick = () => { closeModal(); cb(); };
+      document.getElementById('modalOverlay').classList.add('visible');
+    }
+
+    function closeModal() {
+      document.getElementById('modalOverlay').classList.remove('visible');
+    }
+
+    document.getElementById('modalOverlay').addEventListener('click', e => {
+      if (e.target.id === 'modalOverlay') closeModal();
+    });
+
+    let toastTimer;
+    function showToast(msg, type = 'success') {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className   = `toast ${type} visible`;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('visible'), 3000);
+    }
+  </script>
+</body>
+</html>
