@@ -27,7 +27,7 @@ Preferences preferences;
 String deviceSerial;
 
 // Firmware version
-String firmwareVersion = "v1.3.0";
+String firmwareVersion = "v1.5.0";
 
 // Network state
 bool ethConnected = false;
@@ -566,8 +566,9 @@ void setupWebServer() {
 
             <form action="/upload" method="POST" enctype="multipart/form-data">
               <div class="form-group">
-                <label>Firmware Update (.bin)</label>
+                <label>Firmware Update (OTA)</label>
                 <input type="file" name="update" accept=".bin">
+                <p style="font-size:0.78rem;color:#888;margin-top:6px;">⚠️ Use <strong>Sketch.ino.bin</strong> (app only) — not the merged binary.</p>
               </div>
               <button type="submit">Upload Firmware</button>
             </form>
