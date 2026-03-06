@@ -32,7 +32,11 @@ Preferences preferences;
 String deviceSerial;
 
 // Firmware version
-String firmwareVersion = "v1.5.1";
+String firmwareVersion = "v1.6.0";
+String otaPassword = "netstage";
+String webUsername = "admin";
+String webPassword = "netstage";
+bool webAuthEnabled = false;
 
 // Network state
 bool ethConnected = false;
@@ -61,15 +65,39 @@ IPAddress unicastTarget(0, 0, 0, 0);
 const int FADER_PIN = 1;
 const int ADC_MAX   = 4095;
 
-// Smoothing filter
+// Smoothing filter — moving average (pre-fill buffer on boot)
 const int SMOOTHING_SAMPLES = 16;
 int smoothingBuffer[SMOOTHING_SAMPLES];
 int smoothingIndex = 0;
 long smoothingTotal = 0;
+int lastMovingAvg = 0;
 
-// Deadband
-const int DEADBAND = 2;
+// EMA (Exponential Moving Average) smoothing
+// Alpha 0-100: higher = more responsive, lower = smoother
+// Stored as integer 0-100, applied as alpha/100.0
+bool emaEnabled = true;
+uint8_t emaAlpha = 15;  // default: fairly smooth, still responsive
+float emaValue = 0.0f;
+bool emaInitialised = false;
+
+// Deadband — prevents tiny jitter from generating output changes
+int deadband = 30; // ADC counts — increase to reduce noise, decrease for finer response
 int lastSmoothedValue = 0;
+
+// Spike rejection — discard single-sample jumps larger than this ADC threshold
+// Set to 0 to disable. 200 = ~5% of full range.
+uint16_t spikeThreshold = 200;
+
+// ADC calibration — learned from fader calibration routine
+int adcCalMin = 10;
+int adcCalMax = 4085;
+
+// Calibration state
+bool calibrating = false;
+int calibLiveMin = 4095;
+int calibLiveMax = 0;
+unsigned long calibStartTime = 0;
+const unsigned long CAL_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
 // Invert option
 bool invertFader = false;
@@ -189,14 +217,75 @@ String generateSerial() {
 // Analog / fader
 // -------------------------------------------------------
 int readSmoothedAnalog() {
-  smoothingTotal -= smoothingBuffer[smoothingIndex];
   int newReading = analogRead(FADER_PIN);
+
+  // Step 1: spike rejection
+  // If a reading jumps beyond the threshold it enters a confirmation window.
+  // The candidate target is tracked — if subsequent readings stay within
+  // 150 counts of that candidate for 5 consecutive samples it is accepted
+  // as a real move (snap). If readings are scattered it is noise and
+  // the last good value is held.
+  static bool spikeInitialised = false;
+  static int lastRaw = 0;
+  static int spikeCount = 0;
+  static int spikeCandidate = 0;
+  if (!spikeInitialised) {
+    lastRaw = newReading;
+    spikeInitialised = true;
+  }
+  // If calibration is active, track the live min/max
+  if (calibrating) {
+    if (newReading < calibLiveMin) calibLiveMin = newReading;
+    if (newReading > calibLiveMax) calibLiveMax = newReading;
+  }
+
+  if (spikeThreshold > 0 && abs(newReading - lastRaw) > spikeThreshold) {
+    if (spikeCount == 0) {
+      // First sample over threshold — record candidate target
+      spikeCandidate = newReading;
+      spikeCount = 1;
+    } else if (abs(newReading - spikeCandidate) <= 150) {
+      // Reading is consistent with candidate — increment confidence
+      spikeCount++;
+      if (spikeCount >= 5) {
+        // Confirmed real move — accept and reset
+        lastRaw = newReading;
+        spikeCount = 0;
+      }
+    } else {
+      // Reading is scattered — reset, treat as noise
+      spikeCount = 0;
+    }
+    newReading = lastRaw; // hold until confirmed
+  } else {
+    lastRaw = newReading;
+    spikeCount = 0;
+  }
+
+  // Step 2: moving average over 16 samples
+  smoothingTotal -= smoothingBuffer[smoothingIndex];
   smoothingBuffer[smoothingIndex] = newReading;
   smoothingTotal += newReading;
   smoothingIndex = (smoothingIndex + 1) % SMOOTHING_SAMPLES;
   int averaged = smoothingTotal / SMOOTHING_SAMPLES;
-  if (abs(averaged - lastSmoothedValue) > DEADBAND) {
-    lastSmoothedValue = averaged;
+
+  // Step 3: optional EMA on top of moving average
+  int filtered;
+  if (emaEnabled) {
+    if (!emaInitialised) {
+      emaValue = (float)averaged;
+      emaInitialised = true;
+    }
+    float alpha = emaAlpha / 100.0f;
+    emaValue = alpha * (float)averaged + (1.0f - alpha) * emaValue;
+    filtered = (int)emaValue;
+  } else {
+    filtered = averaged;
+  }
+
+  // Step 4: deadband — only update output if change exceeds threshold
+  if (abs(filtered - lastSmoothedValue) > deadband) {
+    lastSmoothedValue = filtered;
   }
   return lastSmoothedValue;
 }
@@ -204,25 +293,24 @@ int readSmoothedAnalog() {
 uint16_t readFaderValue16bit() {
   uint16_t raw16;
   if (simulationMode) {
-    // simulatedFaderValue is 0-100 (percent), scale to full 16-bit range
     raw16 = (uint16_t)map(simulatedFaderValue, 0, 100, 0, 65535);
   } else {
-    // Map 12-bit ADC (0-4095) directly to full 16-bit range (0-65535)
-    // This gives true 16-bit resolution from the hardware
-    raw16 = (uint16_t)map(readSmoothedAnalog(), 0, ADC_MAX, 0, 65535);
+    int adc = constrain(readSmoothedAnalog(), adcCalMin, adcCalMax);
+    raw16 = (uint16_t)min((long)65535, map(adc, adcCalMin, adcCalMax, 0, 65536));
   }
   return invertFader ? (65535 - raw16) : raw16;
 }
 
 uint8_t readFaderValue() {
-  uint8_t value;
   if (simulationMode) {
-    // simulatedFaderValue is 0-100 (percent), scale to 0-255
-    value = (uint8_t)map(simulatedFaderValue, 0, 100, 0, 255);
-  } else {
-    value = (uint8_t)map(readSmoothedAnalog(), 0, ADC_MAX, 0, 255);
+    uint8_t value = (uint8_t)map(simulatedFaderValue, 0, 100, 0, 255);
+    return invertFader ? (255 - value) : value;
   }
-  return invertFader ? (255 - value) : value;
+  // Derive 8-bit from 16-bit by taking the high byte — this guarantees
+  // 0 maps to 0 and 255 maps to 255 with no off-by-one from integer division
+  uint16_t raw16 = readFaderValue16bit();
+  // If invert is applied, raw16 is already inverted — just take high byte
+  return (uint8_t)(raw16 >> 8);
 }
 
 void resetDMXOutput() {
@@ -263,7 +351,11 @@ String getCurrentIP() {
 }
 
 String getNetworkStatus() {
-  return ethConnected ? ("Ethernet: " + ETH.localIP().toString()) : "Not Connected";
+  if (!ethConnected) return "Not Connected";
+  String dhcpInfo = useDHCP ? "DHCP" : "Static IP";
+  return "Ethernet: " + ETH.localIP().toString() +
+         "<br><span style=\"font-size:0.78rem;opacity:0.8;font-weight:400;\">" + dhcpInfo +
+         " &nbsp;|&nbsp; GW: " + ETH.gatewayIP().toString() + "</span>";
 }
 
 // -------------------------------------------------------
@@ -354,10 +446,23 @@ void sacnBegin() {
 }
 
 // -------------------------------------------------------
+// Web auth helper
+// -------------------------------------------------------
+bool checkAuth(AsyncWebServerRequest *request) {
+  if (!webAuthEnabled) return true;
+  if (!request->authenticate(webUsername.c_str(), webPassword.c_str())) {
+    request->requestAuthentication("OneFader");
+    return false;
+  }
+  return true;
+}
+
+// -------------------------------------------------------
 // Web server
 // -------------------------------------------------------
 void setupWebServer() {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     String html = R"rawliteral(
       <!DOCTYPE html>
       <html lang="en">
@@ -532,6 +637,7 @@ void setupWebServer() {
             <form action="/toggleTestMode" method="POST" style="margin-top:12px;">
               <button type="submit" class="button-secondary">%TEST_MODE_TEXT%</button>
             </form>
+
           </div>
 
           <!-- Network Settings -->
@@ -565,6 +671,60 @@ void setupWebServer() {
             </form>
           </div>
 
+          <!-- Input Tuning -->
+          <div class="card">
+            <div class="card-header">🎛️ Input Tuning</div>
+
+            <form action="/toggleEMA" method="POST">
+              <button type="submit" class="button-secondary">%EMA_MODE_TEXT%</button>
+            </form>
+            <p class="info-text">%EMA_MODE_INFO%</p>
+            <div style="display:%EMA_DISPLAY%;">
+              <form action="/updateEMAAlpha" method="POST">
+                <div class="form-group">
+                  <label>Smoothing Amount (1=max smooth, 100=off)</label>
+                  <input type="number" name="emaAlpha" value="%EMA_ALPHA%" min="1" max="100">
+                </div>
+                <button type="submit">Update Smoothing</button>
+              </form>
+            </div>
+
+            <form action="/updateSpikeThreshold" method="POST" style="margin-top:8px;">
+              <div class="form-group">
+                <label>Spike Rejection (0=off, 1-500)</label>
+                <input type="number" name="spikeThreshold" value="%SPIKE_THRESHOLD%" min="0" max="500">
+                <p style="font-size:0.78rem;color:#888;margin-top:6px;">Discards sudden jumps larger than this value. Prevents random glitches from reaching the output. 200 is a good starting point — lower for stricter rejection, 0 to disable.</p>
+              </div>
+              <button type="submit">Update Spike Rejection</button>
+            </form>
+
+            <form action="/updateDeadband" method="POST" style="margin-top:8px;">
+              <div class="form-group">
+                <label>Deadband (ADC counts)</label>
+                <input type="number" name="deadband" value="%DEADBAND%" min="0" max="200">
+                <p style="font-size:0.78rem;color:#888;margin-top:6px;">Minimum change required to update the output. Increase to reduce noise at rest, decrease for finer response. 30 is a good starting point.</p>
+              </div>
+              <button type="submit">Update Deadband</button>
+            </form>
+
+            <div style="margin-top:20px;padding-top:20px;border-top:1px solid #e8e8f0;">
+              <div class="card-header" style="margin-bottom:8px;font-size:1.1rem;">📐 Fader Calibration</div>
+              <div class="info-grid" style="margin-bottom:16px;">
+                <div class="info-item">
+                  <span class="info-label">Cal Min (ADC)</span>
+                  <span class="info-value">%CAL_MIN%</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Cal Max (ADC)</span>
+                  <span class="info-value">%CAL_MAX%</span>
+                </div>
+              </div>
+              <a href="/calibrate" style="display:block;text-decoration:none;">
+                <button type="button" class="button-secondary" style="margin-top:0;">Calibrate Fader</button>
+              </a>
+            </div>
+          </div>
+
           <!-- System Actions -->
           <div class="card">
             <div class="card-header">🔧 System Actions</div>
@@ -576,6 +736,33 @@ void setupWebServer() {
                 <p style="font-size:0.78rem;color:#888;margin-top:6px;">⚠️ Use <strong>Sketch.ino.bin</strong> (app only) — not the merged binary.</p>
               </div>
               <button type="submit">Upload Firmware</button>
+            </form>
+
+            <form action="/toggleWebAuth" method="POST">
+              <button type="submit" class="button-secondary">%WEB_AUTH_TOGGLE_TEXT%</button>
+            </form>
+            <p class="info-text">%WEB_AUTH_INFO%</p>
+
+            <div style="display:%WEB_AUTH_DISPLAY%;">
+              <form action="/updateWebAuth" method="POST">
+                <div class="form-group">
+                  <label>Web UI Username</label>
+                  <input type="text" name="webUsername" value="%WEB_USERNAME%" placeholder="admin">
+                </div>
+                <div class="form-group">
+                  <label>Web UI Password</label>
+                  <input type="text" name="webPassword" value="%WEB_PASSWORD%" placeholder="Enter password">
+                </div>
+                <button type="submit">Update Credentials</button>
+              </form>
+            </div>
+
+            <form action="/updateOTAPassword" method="POST">
+              <div class="form-group">
+                <label>OTA Password</label>
+                <input type="text" name="otaPassword" value="%OTA_PASSWORD%" placeholder="Enter OTA password">
+              </div>
+              <button type="submit" class="button-secondary">Update OTA Password</button>
             </form>
 
             <form action="/reboot" method="POST" style="margin-top:8px;">
@@ -622,12 +809,14 @@ void setupWebServer() {
               document.getElementById('faderFill').style.width = pct + '%';
             });
             fetch('/getMode').then(r => r.text()).then(d => updateModeUI(d === 'simulation'));
+
             fetch('/networkStatus').then(r => r.text()).then(d => {
-              document.getElementById('networkStatus').innerText = d;
+              document.getElementById('networkStatus').innerHTML = d;
             });
           }, 100);
 
           fetch('/getMode').then(r => r.text()).then(d => updateModeUI(d === 'simulation'));
+
         </script>
       </body>
       </html>
@@ -655,6 +844,14 @@ void setupWebServer() {
     html.replace("%UNICAST_IP%",           unicastTarget.toString());
 
     html.replace("%TEST_MODE_TEXT%",       testModeEnabled ? "Disable Test Mode" : "Enable Test Mode");
+    html.replace("%EMA_MODE_TEXT%",        emaEnabled ? "Disable Input Smoothing" : "Enable Input Smoothing");
+    html.replace("%EMA_MODE_INFO%",        emaEnabled ? "Smoothing active — reduces fader noise and jitter." : "Smoothing disabled — raw ADC input.");
+    html.replace("%EMA_DISPLAY%",          emaEnabled ? "block" : "none");
+    html.replace("%EMA_ALPHA%",            String(emaAlpha));
+    html.replace("%SPIKE_THRESHOLD%",      String(spikeThreshold));
+    html.replace("%DEADBAND%",              String(deadband));
+    html.replace("%CAL_MIN%",               String(adcCalMin));
+    html.replace("%CAL_MAX%",               String(adcCalMax));
     html.replace("%SIMULATION_MODE_TEXT%", simulationMode  ? "Switch to Hardware Mode" : "Switch to Simulation Mode");
     html.replace("%INVERT_MODE_TEXT%",     invertFader ? "Disable Fader Invert" : "Enable Fader Invert");
     html.replace("%INVERT_INFO%",          invertFader ? "Fader is INVERTED (full = 0, off = 255)" : "Fader is normal (off = 0, full = 255)");
@@ -664,6 +861,12 @@ void setupWebServer() {
     html.replace("%GATEWAY%",              gateway.toString());
     html.replace("%DNS%",                  dns.toString());
     html.replace("%NETWORK_STATUS%",       getNetworkStatus());
+    html.replace("%WEB_AUTH_TOGGLE_TEXT%",  webAuthEnabled ? "Disable Web Authentication" : "Enable Web Authentication");
+    html.replace("%WEB_AUTH_INFO%",          webAuthEnabled ? "Web UI is password protected." : "Web UI is open — no login required.");
+    html.replace("%WEB_AUTH_DISPLAY%",       webAuthEnabled ? "block" : "none");
+    html.replace("%WEB_USERNAME%",           webUsername);
+    html.replace("%WEB_PASSWORD%",           webPassword);
+    html.replace("%OTA_PASSWORD%",          otaPassword);
     html.replace("%LOGS%",                 debugLogs);
     request->send(200, "text/html", html);
   });
@@ -685,13 +888,15 @@ void setupWebServer() {
       uint8_t raw = (uint8_t)constrain(simulatedFaderValue, 0, 100);
       pct = invertFader ? (100 - raw) : raw;
     } else {
-      uint8_t raw = (uint8_t)map(readSmoothedAnalog(), 0, ADC_MAX, 0, 100);
+      int adc = constrain(readSmoothedAnalog(), adcCalMin, adcCalMax);
+      uint8_t raw = (uint8_t)min((long)100, map(adc, adcCalMin, adcCalMax, 0, 101));
       pct = invertFader ? (100 - raw) : raw;
     }
     request->send(200, "text/plain", String(pct));
   });
 
   server.on("/setFader", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     if (request->hasParam("value")) {
       simulatedFaderValue = (uint16_t)constrain(request->getParam("value")->value().toInt(), 0, 100);
     }
@@ -703,6 +908,7 @@ void setupWebServer() {
   });
 
   server.on("/toggleSimulation", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     simulationMode = !simulationMode;
     addLog(simulationMode ? "Switched to Simulation Mode" : "Switched to Hardware Mode");
     if (simulationMode) simulatedFaderValue = 0;
@@ -710,6 +916,7 @@ void setupWebServer() {
   });
 
   server.on("/toggleInvert", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     invertFader = !invertFader;
     preferences.putBool("invertFader", invertFader);
     addLog(invertFader ? "Fader Invert: ON" : "Fader Invert: OFF");
@@ -717,6 +924,7 @@ void setupWebServer() {
   });
 
   server.on("/updateStreamName", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     if (request->hasParam("streamName", true)) {
       myDeviceName = request->getParam("streamName", true)->value();
       addLog("Stream Name: " + myDeviceName + " — rebooting to apply");
@@ -729,6 +937,7 @@ void setupWebServer() {
   });
 
   server.on("/updateUniverse", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     if (request->hasParam("universe", true)) {
       uint16_t newUniverse = request->getParam("universe", true)->value().toInt();
       if (newUniverse < 1 || newUniverse > 63999) {
@@ -746,6 +955,7 @@ void setupWebServer() {
   });
 
   server.on("/updateStartAddress", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     if (request->hasParam("dmxStartAddress", true)) {
       uint16_t newAddr = request->getParam("dmxStartAddress", true)->value().toInt();
       if (newAddr < 1 || newAddr > 512) {
@@ -762,6 +972,7 @@ void setupWebServer() {
   });
 
   server.on("/updatePriority", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     if (request->hasParam("sacnPriority", true)) {
       uint8_t newPriority = request->getParam("sacnPriority", true)->value().toInt();
       if (newPriority > 200) {
@@ -778,6 +989,7 @@ void setupWebServer() {
   });
 
   server.on("/toggle16bit", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     use16bit = !use16bit;
     preferences.putBool("use16bit", use16bit);
     addLog(use16bit ? "16-bit mode" : "8-bit mode");
@@ -786,6 +998,7 @@ void setupWebServer() {
   });
 
   server.on("/toggleUnicast", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     useUnicast = !useUnicast;
     preferences.putBool("useUnicast", useUnicast);
     sacnBegin();
@@ -793,6 +1006,7 @@ void setupWebServer() {
   });
 
   server.on("/updateUnicast", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     if (request->hasParam("unicastIP", true)) {
       String ipStr = request->getParam("unicastIP", true)->value();
       if (unicastTarget.fromString(ipStr)) {
@@ -806,7 +1020,195 @@ void setupWebServer() {
     request->redirect("/");
   });
 
+  server.on("/startCalibration", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
+    calibrating = true;
+    calibLiveMin = 4095;
+    calibLiveMax = 0;
+    calibStartTime = millis();
+    addLog("Calibration started");
+    request->redirect("/calibrate");
+  });
+
+  server.on("/calibrate", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
+    // Start calibration automatically when page loads
+    calibrating = true;
+    calibLiveMin = 4095;
+    calibLiveMax = 0;
+    calibStartTime = millis();
+    String html = R"rawliteral(
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Fader Calibration</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; color: #333; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+          .card { background: rgba(255,255,255,0.95); border-radius: 20px; padding: 36px; box-shadow: 0 8px 32px rgba(0,0,0,0.15); max-width: 460px; width: 100%; }
+          .header { text-align: center; margin-bottom: 28px; }
+          .header h1 { font-size: 1.8rem; font-weight: 700; color: #667eea; margin-bottom: 6px; }
+          .header p { color: #888; font-size: 0.9rem; line-height: 1.5; }
+          .info-grid { display: grid; gap: 12px; margin-bottom: 24px; }
+          .info-item { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; background: #f8f9fa; border-radius: 12px; font-size: 0.9rem; }
+          .info-label { font-weight: 600; color: #666; }
+          .info-value { color: #333; font-family: 'Courier New', monospace; font-size: 1rem; font-weight: 700; }
+          .live-badge { display: inline-block; width: 8px; height: 8px; background: #34d399; border-radius: 50%; margin-right: 8px; animation: pulse 1s infinite; }
+          @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+          .status { text-align: center; padding: 14px; border-radius: 12px; margin-bottom: 24px; font-weight: 600; font-size: 0.9rem; background: #fef3c7; color: #92400e; }
+          button { width: 100%; padding: 14px; margin-bottom: 12px; border: none; border-radius: 12px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+          .btn-save { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; box-shadow: 0 4px 15px rgba(102,126,234,0.4); }
+          .btn-save:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(102,126,234,0.6); }
+          .btn-save:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+          .btn-cancel { background: linear-gradient(135deg, #64748b 0%, #475569 100%); color: white; box-shadow: 0 4px 15px rgba(100,116,139,0.3); }
+          .btn-cancel:hover { transform: translateY(-2px); }
+          .range-bar { width: 100%; height: 16px; background: #e0e0e0; border-radius: 8px; overflow: hidden; margin-bottom: 24px; position: relative; }
+          .range-fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); border-radius: 8px; transition: width 0.1s; width: 0%; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="header">
+            <h1>📐 Fader Calibration</h1>
+            <p>Move the fader slowly to <strong>both ends</strong> of its travel, then click Save.</p>
+          </div>
+          <div class="status"><span class="live-badge"></span>Calibrating — move fader to both extremes &nbsp;|&nbsp; <span id="countdown">2:00</span> remaining</div>
+          <div class="range-bar"><div class="range-fill" id="rangeFill"></div></div>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="info-label">Live Min (ADC)</span>
+              <span class="info-value" id="liveMin">—</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Live Max (ADC)</span>
+              <span class="info-value" id="liveMax">—</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Range Captured</span>
+              <span class="info-value" id="rangeSpan">—</span>
+            </div>
+          </div>
+          <form action="/saveCalibration" method="POST">
+            <button type="submit" class="btn-save" id="saveBtn">Save Calibration</button>
+          </form>
+          <form action="/cancelCalibration" method="POST">
+            <button type="submit" class="btn-cancel">Cancel</button>
+          </form>
+        </div>
+        <script>
+          function fmt(s) {
+            var m = Math.floor(s / 60);
+            var sec = s % 60;
+            return m + ':' + (sec < 10 ? '0' : '') + sec;
+          }
+          function poll() {
+            fetch('/calStatus').then(r => r.json()).then(d => {
+              if (d.liveMin < 4095) document.getElementById('liveMin').textContent = d.liveMin;
+              if (d.liveMax > 0)    document.getElementById('liveMax').textContent = d.liveMax;
+              if (d.liveMin < 4095 && d.liveMax > 0) {
+                var span = d.liveMax - d.liveMin;
+                document.getElementById('rangeSpan').textContent = span + ' counts';
+                var pct = Math.min(100, Math.round(span / 4095 * 100));
+                document.getElementById('rangeFill').style.width = pct + '%';
+              }
+              if (!d.calibrating) {
+                window.location.href = '/';
+              } else {
+                document.getElementById('countdown').textContent = fmt(d.secsLeft);
+                if (d.secsLeft <= 10) {
+                  document.getElementById('countdown').style.color = '#dc2626';
+                  document.getElementById('countdown').style.fontWeight = '700';
+                }
+              }
+            }).catch(() => {});
+          }
+          setInterval(poll, 500);
+          poll();
+        </script>
+      </body>
+      </html>
+    )rawliteral";
+    request->send(200, "text/html", html);
+  });
+
+  server.on("/calStatus", HTTP_GET, [](AsyncWebServerRequest *request) {
+    int secsLeft = calibrating ? max(0, (int)((CAL_TIMEOUT_MS - (millis() - calibStartTime)) / 1000)) : 0;
+    String json = "{\"calibrating\":" + String(calibrating ? "true" : "false") +
+                  ",\"liveMin\":"  + String(calibLiveMin) +
+                  ",\"liveMax\":"  + String(calibLiveMax) +
+                  ",\"secsLeft\":" + String(secsLeft) + "}";
+    request->send(200, "application/json", json);
+  });
+
+  server.on("/saveCalibration", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
+    if (calibLiveMax > calibLiveMin + 100) {
+      // Use exact captured values — no margin needed since map() with
+      // constrain will clamp anything at or beyond these to 0/100%
+      adcCalMin = calibLiveMin;
+      adcCalMax = calibLiveMax;
+      preferences.putInt("adcCalMin", adcCalMin);
+      preferences.putInt("adcCalMax", adcCalMax);
+      addLog("Calibration saved: min=" + String(adcCalMin) + " max=" + String(adcCalMax));
+    } else {
+      addLog("Calibration range too small — not saved");
+    }
+    calibrating = false;
+    request->redirect("/");
+  });
+
+  server.on("/cancelCalibration", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
+    calibrating = false;
+    addLog("Calibration cancelled");
+    request->redirect("/");
+  });
+
+  server.on("/updateDeadband", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
+    if (request->hasParam("deadband", true)) {
+      deadband = constrain(request->getParam("deadband", true)->value().toInt(), 0, 200);
+      preferences.putInt("deadband", deadband);
+      addLog("Deadband: " + String(deadband));
+    }
+    request->redirect("/");
+  });
+
+  server.on("/updateSpikeThreshold", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
+    if (request->hasParam("spikeThreshold", true)) {
+      spikeThreshold = (uint16_t)constrain(request->getParam("spikeThreshold", true)->value().toInt(), 0, 500);
+      preferences.putUInt("spikeThreshold", spikeThreshold);
+      addLog("Spike Rejection: " + (spikeThreshold == 0 ? String("OFF") : String(spikeThreshold)));
+    }
+    request->redirect("/");
+  });
+
+  server.on("/toggleEMA", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
+    emaEnabled = !emaEnabled;
+    emaInitialised = false; // reset so EMA re-seeds on next read
+    preferences.putBool("emaEnabled", emaEnabled);
+    addLog(emaEnabled ? "Input Smoothing ON" : "Input Smoothing OFF");
+    request->redirect("/");
+  });
+
+  server.on("/updateEMAAlpha", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
+    if (request->hasParam("emaAlpha", true)) {
+      uint8_t val = (uint8_t)constrain(request->getParam("emaAlpha", true)->value().toInt(), 1, 100);
+      emaAlpha = val;
+      emaInitialised = false;
+      preferences.putUChar("emaAlpha", emaAlpha);
+      addLog("Smoothing alpha: " + String(emaAlpha));
+    }
+    request->redirect("/");
+  });
+
   server.on("/toggleTestMode", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     testModeEnabled = !testModeEnabled;
     addLog(testModeEnabled ? "Test Mode ON" : "Test Mode OFF");
     if (testModeEnabled) { testPercent = 0; testFadeDirection = true; }
@@ -815,6 +1217,7 @@ void setupWebServer() {
   });
 
   server.on("/updateIPSettings", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     if (request->hasParam("staticIP", true) && request->hasParam("subnet", true) &&
         request->hasParam("gateway", true) && request->hasParam("dns", true)) {
       staticIP.fromString(request->getParam("staticIP", true)->value());
@@ -829,13 +1232,46 @@ void setupWebServer() {
   });
 
   server.on("/dhcpToggle", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     useDHCP = !useDHCP;
     saveNetworkSettings();
     addLog(useDHCP ? "Switched to DHCP" : "Switched to Static IP");
     request->redirect("/");
   });
 
+  server.on("/toggleWebAuth", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
+    webAuthEnabled = !webAuthEnabled;
+    preferences.putBool("webAuthEnabled", webAuthEnabled);
+    addLog(webAuthEnabled ? "Web Auth: ON" : "Web Auth: OFF");
+    request->redirect("/");
+  });
+
+  server.on("/updateWebAuth", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
+    if (request->hasParam("webUsername", true) && request->hasParam("webPassword", true)) {
+      webUsername = request->getParam("webUsername", true)->value();
+      webPassword = request->getParam("webPassword", true)->value();
+      preferences.putString("webUsername", webUsername);
+      preferences.putString("webPassword", webPassword);
+      addLog("Web auth updated");
+    }
+    request->redirect("/");
+  });
+
+  server.on("/updateOTAPassword", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
+    if (request->hasParam("otaPassword", true)) {
+      otaPassword = request->getParam("otaPassword", true)->value();
+      preferences.putString("otaPassword", otaPassword);
+      ArduinoOTA.setPassword(otaPassword.c_str());
+      addLog("OTA Password updated");
+    }
+    request->redirect("/");
+  });
+
   server.on("/reboot", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     addLog("Reboot triggered via web UI");
     request->send(200, "text/plain", "Rebooting...");
     delay(500);
@@ -843,6 +1279,7 @@ void setupWebServer() {
   });
 
   server.on("/reset", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (!checkAuth(request)) return;
     addLog("Factory Reset Triggered");
     preferences.clear();
     request->send(200, "text/plain", "Factory reset complete. Device will restart...");
@@ -853,6 +1290,7 @@ void setupWebServer() {
   server.on(
     "/upload", HTTP_POST,
     [](AsyncWebServerRequest *request) {
+      if (!checkAuth(request)) return;
       request->send(200, "text/plain", Update.hasError() ? "Update Failed" : "Update Complete. Rebooting...");
       delay(1000);
       ESP.restart();
@@ -909,16 +1347,28 @@ void setup() {
     delay(5);
   }
   lastSmoothedValue = smoothingTotal / SMOOTHING_SAMPLES;
+  emaValue = (float)lastSmoothedValue;
+  emaInitialised = true;
   addLog("Fader initialized on IO1");
 
   preferences.begin("onefader", false);
 
   // Load saved settings
   myDeviceName    = preferences.getString("streamName",    "OneFader");
+  otaPassword     = preferences.getString("otaPassword",    "netstage");
+  webUsername     = preferences.getString("webUsername",    "admin");
+  webPassword     = preferences.getString("webPassword",    "netstage");
+  webAuthEnabled  = preferences.getBool("webAuthEnabled",  false);
   universe        = preferences.getUInt("universe",        1);
   dmxStartAddress = preferences.getUInt("dmxStartAddress", 1);
   sacnPriority    = preferences.getUChar("sacnPriority",   100);
   simulationMode  = false; // always start in hardware mode
+  deadband         = preferences.getInt("deadband",          30);
+  adcCalMin        = preferences.getInt("adcCalMin",         10);
+  adcCalMax        = preferences.getInt("adcCalMax",         4085);
+  emaEnabled       = preferences.getBool("emaEnabled",       true);
+  emaAlpha         = preferences.getUChar("emaAlpha",        15);
+  spikeThreshold   = preferences.getUInt("spikeThreshold",  200);
   useUnicast      = preferences.getBool("useUnicast",      false);
   use16bit        = preferences.getBool("use16bit",        false);
   invertFader     = preferences.getBool("invertFader",     false);
@@ -979,6 +1429,7 @@ void setup() {
 
   // OTA
   ArduinoOTA.setHostname(("OneFader-" + deviceSerial).c_str());
+  ArduinoOTA.setPassword(otaPassword.c_str());
   ArduinoOTA.begin();
   addLog("OTA ready");
 
@@ -1016,6 +1467,14 @@ void loop() {
 
   // ---- Regular tasks --------------------------------------------------
   ArduinoOTA.handle();
+
+  // Auto-cancel calibration if it times out
+  if (calibrating && (millis() - calibStartTime > CAL_TIMEOUT_MS)) {
+    calibrating = false;
+    addLog("Calibration timed out — auto cancelled");
+  }
+
+
 
   unsigned long currentMillis = millis();
 
