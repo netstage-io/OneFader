@@ -75,7 +75,7 @@ A 2-minute countdown is shown on the calibration page. If you navigate away with
 
 - **Web Authentication** — enable or disable HTTP Basic Auth on the web interface. When enabled, set a custom username and password below the toggle. Default: disabled.
 - **OTA Password** — the password used when uploading firmware via Arduino IDE OTA. Default: `netstage`.
-- **Firmware Update** — upload a new firmware `.bin` directly via the browser without touching USB. Use the **app-only** `.bin` (`Sketch.ino.bin`) — not the merged binary.
+- **Firmware Update** — upload a new firmware `.bin` directly via the browser without touching USB. Use the **app-only** `.bin` (`onefader-webversion.bin`) — not the merged binary.
 - **Reboot** — restart the device without losing any saved settings
 - **Factory Reset** — clears all saved settings and returns to defaults. The device will reboot after reset.
 
