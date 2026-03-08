@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OneFader — Device Tool</title>
-  <meta name="version" content="V1.6.3">
+  <meta name="version" content="V1.6.4">
   <style>
     * {
       margin: 0;
@@ -417,7 +417,7 @@
 
   <div class="header">
     <h1>OneFader</h1>
-    <div class="subtitle">Device Tool v1.6.3 — by <a href="https://netstage.io" target="_blank">netstage.io</a></div>
+    <div class="subtitle">Device Tool v1.6.4 — by <a href="https://netstage.io" target="_blank">netstage.io</a></div>
   </div>
 
   <div class="grid">
@@ -841,10 +841,8 @@
         document.getElementById('progressLabel').classList.add('visible');
         document.getElementById('progressWrap').classList.add('visible');
 
-        // GitHub download URLs redirect to S3 which Chrome blocks cross-origin.
-        // Use allorigins to fetch the binary and return it as a blob.
-        const proxyURL = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(asset.browser_download_url);
-        const binRes = await fetch(proxyURL);
+        // Binary is hosted in the same GitHub Pages repo — no CORS issues
+        const binRes = await fetch('OneFader.bin');
         if (!binRes.ok) throw new Error(`Failed to download binary: ${binRes.status}`);
 
         // Stream with progress
