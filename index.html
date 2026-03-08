@@ -831,31 +831,22 @@
           asset.name + ' — ' + (asset.size / 1024).toFixed(1) + ' KB';
         updateFWCurrent();
 
-        // GitHub's release download URLs block cross-origin requests.
-        // Fetch the binary ourselves, convert to a base64 data URL, then
-        // embed it directly in the manifest so ESP Web Tools never needs
-        // to make its own cross-origin request.
+        // Fetch the binary directly and create a local blob URL to work around
+        // GitHub's CORS policy which blocks direct cross-origin requests
         addLog('Downloading firmware binary...', 'info');
         btn.textContent = 'Downloading...';
         const binRes = await fetch(asset.browser_download_url);
         if (!binRes.ok) throw new Error(`Failed to download binary: ${binRes.status}`);
-        const binArrayBuffer = await binRes.arrayBuffer();
-        // Convert in chunks to avoid call stack limit on large binaries (~1.2MB)
-        const binBytes = new Uint8Array(binArrayBuffer);
-        let binBase64 = '';
-        const CHUNK = 8192;
-        for (let i = 0; i < binBytes.length; i += CHUNK) {
-          binBase64 += btoa(String.fromCharCode(...binBytes.subarray(i, i + CHUNK)));
-        }
-        const binDataURL = `data:application/octet-stream;base64,${binBase64}`;
+        const binBlob = await binRes.blob();
+        const binURL = URL.createObjectURL(binBlob);
 
-        // Build manifest using the data URL — no cross-origin fetch needed by ESP Web Tools
+        // Build manifest pointing to the local blob URL
         const manifest = {
           name: 'OneFader',
           version: release.tag_name,
           builds: [{
             chipFamily: 'ESP32-S3',
-            parts: [{ path: binDataURL, offset: 0 }]
+            parts: [{ path: binURL, offset: 0 }]
           }]
         };
         const manifestURL = URL.createObjectURL(
