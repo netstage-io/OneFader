@@ -842,8 +842,8 @@
         document.getElementById('progressWrap').classList.add('visible');
 
         // GitHub download URLs redirect to S3 which Chrome blocks cross-origin.
-        // Route through a CORS proxy to fetch the binary directly.
-        const proxyURL = 'https://corsproxy.io/?url=' + encodeURIComponent(asset.browser_download_url);
+        // Use allorigins to fetch the binary and return it as a blob.
+        const proxyURL = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(asset.browser_download_url);
         const binRes = await fetch(proxyURL);
         if (!binRes.ok) throw new Error(`Failed to download binary: ${binRes.status}`);
 
