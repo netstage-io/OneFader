@@ -600,8 +600,8 @@
   <script>
     // ── CONFIG — update to match your GitHub repo ────────────────────────────
     const GITHUB_OWNER   = 'netstage-io';
-    const GITHUB_REPO    = 'OneFader';
-    const BIN_ASSET_NAME = 'OneFader.bin';
+    const GITHUB_REPO    = 'onefader-firmware';
+    const BIN_ASSET_NAME = 'onefader.bin';
     // ─────────────────────────────────────────────────────────────────────────
 
     let port            = null;
@@ -777,7 +777,7 @@
 
         const area = document.getElementById('customFlashArea');
         area.innerHTML = `
-          <esp-web-install-button manifest="${manifestURL}">
+          <esp-web-install-button manifest="${manifestURL}" install-unchecked>
             <button slot="activate" style="
               width:100%; padding:12px; margin:0;
               background:linear-gradient(135deg,#34d399 0%,#059669 100%);
@@ -830,13 +830,22 @@
           asset.name + ' — ' + (asset.size / 1024).toFixed(1) + ' KB';
         updateFWCurrent();
 
-        // Build a blob manifest for ESP Web Tools
+        // Fetch the binary directly and create a local blob URL to work around
+        // GitHub's CORS policy which blocks direct cross-origin requests
+        addLog('Downloading firmware binary...', 'info');
+        btn.textContent = 'Downloading...';
+        const binRes = await fetch(asset.browser_download_url);
+        if (!binRes.ok) throw new Error(`Failed to download binary: ${binRes.status}`);
+        const binBlob = await binRes.blob();
+        const binURL = URL.createObjectURL(binBlob);
+
+        // Build manifest pointing to the local blob URL
         const manifest = {
           name: 'OneFader',
           version: release.tag_name,
           builds: [{
             chipFamily: 'ESP32-S3',
-            parts: [{ path: asset.browser_download_url, offset: 0 }]
+            parts: [{ path: binURL, offset: 0 }]
           }]
         };
         const manifestURL = URL.createObjectURL(
@@ -846,7 +855,7 @@
         const area = document.getElementById('fwFlashArea');
         area.classList.add('visible');
         area.innerHTML = `
-          <esp-web-install-button manifest="${manifestURL}">
+          <esp-web-install-button manifest="${manifestURL}" install-unchecked>
             <button slot="activate" style="
               width:100%; padding:14px; margin-top:4px; margin-bottom:0;
               background:linear-gradient(135deg,#34d399 0%,#059669 100%);
