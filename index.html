@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OneFader — Device Tool</title>
-  <meta name="version" content="V1.6.4">
+  <meta name="version" content="V1.6.5">
   <style>
     * {
       margin: 0;
@@ -256,31 +256,6 @@
     .fw-flash-area { display: none; margin-top: 4px; }
     .fw-flash-area.visible { display: block; }
 
-    .progress-wrap {
-      background: #e0e0e0;
-      border-radius: 8px;
-      overflow: hidden;
-      height: 10px;
-      margin: 10px 0;
-      display: none;
-    }
-    .progress-wrap.visible { display: block; }
-    .progress-bar {
-      height: 100%;
-      background: linear-gradient(90deg, #667eea, #764ba2);
-      border-radius: 8px;
-      width: 0%;
-      transition: width 0.2s;
-    }
-    .progress-label {
-      font-size: 0.8rem;
-      color: #888;
-      text-align: center;
-      margin-bottom: 8px;
-      display: none;
-    }
-    .progress-label.visible { display: block; }
-
     .logs {
       background: #1e293b;
       color: #e2e8f0;
@@ -417,7 +392,7 @@
 
   <div class="header">
     <h1>OneFader</h1>
-    <div class="subtitle">Device Tool v1.6.4 — by <a href="https://netstage.io" target="_blank">netstage.io</a></div>
+    <div class="subtitle">Device Tool v1.6.5 — by <a href="https://netstage.io" target="_blank">netstage.io</a></div>
   </div>
 
   <div class="grid">
@@ -489,11 +464,6 @@
       </div>
 
       <button id="btnCheckFW" onclick="checkFirmware()">Check for Latest Firmware</button>
-
-      <div class="progress-label" id="progressLabel">Downloading firmware...</div>
-      <div class="progress-wrap" id="progressWrap">
-        <div class="progress-bar" id="progressBar"></div>
-      </div>
 
       <div class="fw-flash-area" id="fwFlashArea"></div>
 
@@ -833,81 +803,30 @@
           asset.name + ' — ' + (asset.size / 1024).toFixed(1) + ' KB';
         updateFWCurrent();
 
-        // Download binary and convert to base64 data URL so ESP Web Tools
-        // never makes its own cross-origin request (bypasses GitHub CORS)
-        addLog('Downloading firmware binary...', 'info');
-        btn.textContent = 'Downloading...';
-
-        document.getElementById('progressLabel').classList.add('visible');
-        document.getElementById('progressWrap').classList.add('visible');
-
-        // Binary is hosted in the same GitHub Pages repo — no CORS issues
-        const binRes = await fetch('OneFader.bin');
-        if (!binRes.ok) throw new Error(`Failed to download binary: ${binRes.status}`);
-
-        // Stream with progress
-        const contentLength = asset.size;
-        const reader2 = binRes.body.getReader();
-        const chunks = [];
-        let received = 0;
-        while (true) {
-          const { done, value } = await reader2.read();
-          if (done) break;
-          chunks.push(value);
-          received += value.length;
-          const pct = Math.round((received / contentLength) * 100);
-          document.getElementById('progressBar').style.width = pct + '%';
-          document.getElementById('progressLabel').textContent = `Downloading... ${pct}%`;
-        }
-
-        // Combine chunks
-        const binBytes = new Uint8Array(received);
-        let offset = 0;
-        for (const chunk of chunks) { binBytes.set(chunk, offset); offset += chunk.length; }
-
-        // Convert to base64 in chunks to avoid stack overflow on ~1.2MB binary
-        let binBase64 = '';
-        const CHUNK = 8192;
-        for (let i = 0; i < binBytes.length; i += CHUNK) {
-          binBase64 += btoa(String.fromCharCode(...binBytes.subarray(i, i + CHUNK)));
-        }
-        const binDataURL = `data:application/octet-stream;base64,${binBase64}`;
-
-        document.getElementById('progressLabel').textContent = 'Ready to flash!';
-
-        const manifest = {
-          name: 'OneFader',
-          version: release.tag_name,
-          builds: [{ chipFamily: 'ESP32-S3', parts: [{ path: binDataURL, offset: 0 }] }]
-        };
-        const manifestURL = URL.createObjectURL(
-          new Blob([JSON.stringify(manifest)], { type: 'application/json' })
-        );
-
         const area = document.getElementById('fwFlashArea');
         area.classList.add('visible');
         area.innerHTML = `
-          <esp-web-install-button manifest="${manifestURL}" install-unchecked>
-            <button slot="activate" style="
-              width:100%; padding:14px; margin-top:4px; margin-bottom:0;
-              background:linear-gradient(135deg,#34d399 0%,#059669 100%);
-              color:white; border:none; border-radius:12px;
-              font-size:1rem; font-weight:600; cursor:pointer;
-              box-shadow:0 4px 15px rgba(52,211,153,0.4);
-            ">⚡ Flash ${release.tag_name} to Device</button>
-            <span slot="unsupported" style="color:#dc2626; font-size:0.85rem; display:block; margin-top:8px;">
-              Web Serial not supported — use Chrome or Edge.
-            </span>
-          </esp-web-install-button>`;
+          <div style="background:#f0fdf4; border:1px solid #86efac; border-radius:12px; padding:16px; margin-top:4px;">
+            <p style="font-size:0.85rem; color:#166534; margin-bottom:12px; line-height:1.5;">
+              Download the firmware, then select the .bin using <strong>Flash Custom .bin</strong> below.
+            </p>
+            <a href="${asset.browser_download_url}" download="${asset.name}" style="text-decoration:none; display:block;">
+              <button type="button" style="
+                width:100%; padding:14px; margin:0;
+                background:linear-gradient(135deg,#34d399 0%,#059669 100%);
+                color:white; border:none; border-radius:12px;
+                font-size:1rem; font-weight:600; cursor:pointer;
+                box-shadow:0 4px 15px rgba(52,211,153,0.4);
+              ">⬇️ Download ${release.tag_name} — ${asset.name}</button>
+            </a>
+          </div>`;
 
-        addLog('Ready to flash: ' + release.tag_name, 'success');
-        showToast('Downloaded — ready to flash!', 'success');
+        addLog('Latest: ' + release.tag_name + ' (' + (asset.size / 1024).toFixed(1) + ' KB)', 'success');
+        showToast('Firmware info loaded', 'success');
 
       } catch (err) {
         addLog('Firmware check failed: ' + err.message, 'error');
         showToast('Failed: ' + err.message, 'error');
-        document.getElementById('progressLabel').classList.remove('visible');
-        document.getElementById('progressWrap').classList.remove('visible');
       } finally {
         btn.textContent = 'Check Again';
         btn.disabled = false;
