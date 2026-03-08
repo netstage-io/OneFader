@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OneFader — Device Tool</title>
-  <meta name="version" content="V1.6.1">
+  <meta name="version" content="V1.6.2">
   <style>
     * {
       margin: 0;
@@ -85,7 +85,6 @@
       gap: 10px;
     }
 
-    /* Status pill */
     .status-row {
       display: flex;
       align-items: center;
@@ -123,7 +122,6 @@
       50%       { opacity: 0.3; }
     }
 
-    /* Info grid */
     .info-grid {
       display: grid;
       gap: 10px;
@@ -143,7 +141,6 @@
     .info-label { font-weight: 600; color: #666; }
     .info-value { color: #333; font-family: 'Courier New', monospace; font-size: 0.85rem; }
 
-    /* Forms */
     .form-group { margin-bottom: 16px; }
 
     label {
@@ -179,7 +176,6 @@
       gap: 10px;
     }
 
-    /* Buttons */
     button {
       width: 100%;
       padding: 14px;
@@ -231,7 +227,6 @@
 
     .button-success:hover { box-shadow: 0 6px 20px rgba(52, 211, 153, 0.6); }
 
-    /* Browser warning */
     .browser-warning {
       background: #fef3c7;
       border: 1px solid #fbbf24;
@@ -245,7 +240,6 @@
 
     .browser-warning.visible { display: block; }
 
-    /* Firmware */
     .fw-version-row {
       display: flex;
       justify-content: space-between;
@@ -262,7 +256,31 @@
     .fw-flash-area { display: none; margin-top: 4px; }
     .fw-flash-area.visible { display: block; }
 
-    /* Logs */
+    .progress-wrap {
+      background: #e0e0e0;
+      border-radius: 8px;
+      overflow: hidden;
+      height: 10px;
+      margin: 10px 0;
+      display: none;
+    }
+    .progress-wrap.visible { display: block; }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea, #764ba2);
+      border-radius: 8px;
+      width: 0%;
+      transition: width 0.2s;
+    }
+    .progress-label {
+      font-size: 0.8rem;
+      color: #888;
+      text-align: center;
+      margin-bottom: 8px;
+      display: none;
+    }
+    .progress-label.visible { display: block; }
+
     .logs {
       background: #1e293b;
       color: #e2e8f0;
@@ -324,7 +342,6 @@
 
     .btn-clear:hover { border-color: #f87171; color: #f87171; transform: none; box-shadow: none; }
 
-    /* Modal */
     .modal-overlay {
       position: fixed;
       inset: 0;
@@ -368,7 +385,6 @@
 
     .btn-modal-cancel:hover { background: #e2e8f0 !important; box-shadow: none !important; }
 
-    /* Toast */
     .toast {
       position: fixed;
       bottom: 28px;
@@ -401,12 +417,12 @@
 
   <div class="header">
     <h1>OneFader</h1>
-    <div class="subtitle">Device Tool v1.6.1 — by <a href="https://netstage.io" target="_blank">netstage.io</a></div>
+    <div class="subtitle">Device Tool v1.6.2 — by <a href="https://netstage.io" target="_blank">netstage.io</a></div>
   </div>
 
   <div class="grid">
 
-    <!-- USB Connection — full width -->
+    <!-- USB Connection -->
     <div class="card card-full">
       <div class="card-header">🔌 USB Connection</div>
 
@@ -449,7 +465,7 @@
       </div>
     </div>
 
-    <!-- Firmware Update — full width -->
+    <!-- Firmware Update -->
     <div class="card card-full">
       <div class="card-header">⚡ Firmware Update</div>
 
@@ -473,6 +489,11 @@
       </div>
 
       <button id="btnCheckFW" onclick="checkFirmware()">Check for Latest Firmware</button>
+
+      <div class="progress-label" id="progressLabel">Downloading firmware...</div>
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
 
       <div class="fw-flash-area" id="fwFlashArea"></div>
 
@@ -595,15 +616,12 @@
   <!-- Toast -->
   <div class="toast" id="toast"></div>
 
-  <!-- ESP Web Tools (Espressif official) -->
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
 
   <script>
-    // ── CONFIG — update to match your GitHub repo ────────────────────────────
     const GITHUB_OWNER   = 'netstage-io';
     const GITHUB_REPO    = 'OneFader';
     const BIN_ASSET_NAME = 'OneFader.bin';
-    // ─────────────────────────────────────────────────────────────────────────
 
     let port            = null;
     let isConnected     = false;
@@ -614,14 +632,12 @@
     let reader          = null;
     let readLoopActive  = false;
 
-    // Browser check
     if (!('serial' in navigator)) {
       document.getElementById('browserWarning').classList.add('visible');
       document.getElementById('btnConnect').disabled = true;
       document.getElementById('btnConnect').textContent = 'Web Serial not supported — use Chrome or Edge';
     }
 
-    // ── Serial ───────────────────────────────────────────────────────────────
     async function connectSerial() {
       try {
         setStatus('connecting', 'Connecting...');
@@ -638,9 +654,6 @@
             ? `USB Serial (VID 0x${info.usbVendorId.toString(16).toUpperCase()})`
             : 'USB Serial';
 
-        // Acquire BOTH locks immediately before starting the read loop.
-        // Web Serial requires both to be claimed before either is used —
-        // claiming them here prevents the "port locked" race condition.
         writer = port.writable.getWriter();
         reader = port.readable.getReader();
         isConnected = true;
@@ -719,7 +732,6 @@
       }
     }
 
-    // Parse STATUS response to populate device info chips
     function parseStatusLine(line) {
       const m = line.match(/\[ONEFADER\]\s+(\w+):(.+)/);
       if (!m) return;
@@ -736,7 +748,6 @@
       if (el && deviceFWVersion) el.textContent = deviceFWVersion;
     }
 
-    // ── Custom .bin upload ───────────────────────────────────────────────────
     const customBinInput = document.getElementById('customBinInput');
     const customBinLabel = document.getElementById('customBinLabel');
     const btnFlashCustom = document.getElementById('btnFlashCustom');
@@ -759,7 +770,6 @@
       btnFlashCustom.disabled = true;
 
       try {
-        // Read file as ArrayBuffer then convert to base64 data URL for ESP Web Tools manifest
         const arrayBuffer = await file.arrayBuffer();
         const blob = new Blob([arrayBuffer], { type: 'application/octet-stream' });
         const blobURL = URL.createObjectURL(blob);
@@ -767,10 +777,7 @@
         const manifest = {
           name: 'OneFader Custom',
           version: 'custom',
-          builds: [{
-            chipFamily: 'ESP32-S3',
-            parts: [{ path: blobURL, offset: 0 }]
-          }]
+          builds: [{ chipFamily: 'ESP32-S3', parts: [{ path: blobURL, offset: 0 }] }]
         };
         const manifestURL = URL.createObjectURL(
           new Blob([JSON.stringify(manifest)], { type: 'application/json' })
@@ -785,17 +792,14 @@
               color:white; border:none; border-radius:12px;
               font-size:0.95rem; font-weight:600; cursor:pointer;
               box-shadow:0 4px 15px rgba(52,211,153,0.4);
-            ">
-              ⚡ Flash ${file.name} to Device
-            </button>
+            ">⚡ Flash ${file.name} to Device</button>
             <span slot="unsupported" style="color:#dc2626; font-size:0.85rem; display:block; margin-top:8px;">
               Web Serial not supported — use Chrome or Edge.
             </span>
-          </esp-web-install-button>
-        `;
+          </esp-web-install-button>`;
 
         addLog('Custom bin ready: ' + file.name, 'success');
-        showToast('Ready to flash — click the button above', 'success');
+        showToast('Ready to flash', 'success');
 
       } catch (err) {
         addLog('Custom bin error: ' + err.message, 'error');
@@ -806,11 +810,10 @@
       }
     }
 
-    // ── Firmware update ──────────────────────────────────────────────────────
     async function checkFirmware() {
       const btn = document.getElementById('btnCheckFW');
       btn.textContent = 'Checking GitHub...';
-      btn.disabled    = true;
+      btn.disabled = true;
 
       try {
         const res = await fetch(
@@ -823,31 +826,58 @@
         if (!asset) throw new Error(`No file named "${BIN_ASSET_NAME}" in latest release`);
 
         document.getElementById('fwVersionBlock').style.display = 'block';
-        document.getElementById('fwLatest').textContent =
-          release.tag_name;
+        document.getElementById('fwLatest').textContent = release.tag_name;
         document.getElementById('fwDate').textContent =
           new Date(release.published_at).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
         document.getElementById('fwAsset').textContent =
           asset.name + ' — ' + (asset.size / 1024).toFixed(1) + ' KB';
         updateFWCurrent();
 
-        // Fetch the binary directly and create a local blob URL to work around
-        // GitHub's CORS policy which blocks direct cross-origin requests
+        // Download binary and convert to base64 data URL so ESP Web Tools
+        // never makes its own cross-origin request (bypasses GitHub CORS)
         addLog('Downloading firmware binary...', 'info');
         btn.textContent = 'Downloading...';
+
+        document.getElementById('progressLabel').classList.add('visible');
+        document.getElementById('progressWrap').classList.add('visible');
+
         const binRes = await fetch(asset.browser_download_url);
         if (!binRes.ok) throw new Error(`Failed to download binary: ${binRes.status}`);
-        const binBlob = await binRes.blob();
-        const binURL = URL.createObjectURL(binBlob);
 
-        // Build manifest pointing to the local blob URL
+        // Stream with progress
+        const contentLength = asset.size;
+        const reader2 = binRes.body.getReader();
+        const chunks = [];
+        let received = 0;
+        while (true) {
+          const { done, value } = await reader2.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          const pct = Math.round((received / contentLength) * 100);
+          document.getElementById('progressBar').style.width = pct + '%';
+          document.getElementById('progressLabel').textContent = `Downloading... ${pct}%`;
+        }
+
+        // Combine chunks
+        const binBytes = new Uint8Array(received);
+        let offset = 0;
+        for (const chunk of chunks) { binBytes.set(chunk, offset); offset += chunk.length; }
+
+        // Convert to base64 in chunks to avoid stack overflow on ~1.2MB binary
+        let binBase64 = '';
+        const CHUNK = 8192;
+        for (let i = 0; i < binBytes.length; i += CHUNK) {
+          binBase64 += btoa(String.fromCharCode(...binBytes.subarray(i, i + CHUNK)));
+        }
+        const binDataURL = `data:application/octet-stream;base64,${binBase64}`;
+
+        document.getElementById('progressLabel').textContent = 'Ready to flash!';
+
         const manifest = {
           name: 'OneFader',
           version: release.tag_name,
-          builds: [{
-            chipFamily: 'ESP32-S3',
-            parts: [{ path: binURL, offset: 0 }]
-          }]
+          builds: [{ chipFamily: 'ESP32-S3', parts: [{ path: binDataURL, offset: 0 }] }]
         };
         const manifestURL = URL.createObjectURL(
           new Blob([JSON.stringify(manifest)], { type: 'application/json' })
@@ -863,28 +893,26 @@
               color:white; border:none; border-radius:12px;
               font-size:1rem; font-weight:600; cursor:pointer;
               box-shadow:0 4px 15px rgba(52,211,153,0.4);
-            ">
-              ⚡ Flash ${release.tag_name} to Device
-            </button>
+            ">⚡ Flash ${release.tag_name} to Device</button>
             <span slot="unsupported" style="color:#dc2626; font-size:0.85rem; display:block; margin-top:8px;">
               Web Serial not supported — use Chrome or Edge.
             </span>
-          </esp-web-install-button>
-        `;
+          </esp-web-install-button>`;
 
-        addLog('Latest firmware: ' + release.tag_name + ' (' + asset.name + ')', 'success');
-        showToast('Latest: ' + release.tag_name, 'success');
+        addLog('Ready to flash: ' + release.tag_name, 'success');
+        showToast('Downloaded — ready to flash!', 'success');
 
       } catch (err) {
         addLog('Firmware check failed: ' + err.message, 'error');
         showToast('Failed: ' + err.message, 'error');
+        document.getElementById('progressLabel').classList.remove('visible');
+        document.getElementById('progressWrap').classList.remove('visible');
       } finally {
         btn.textContent = 'Check Again';
-        btn.disabled    = false;
+        btn.disabled = false;
       }
     }
 
-    // ── Actions ──────────────────────────────────────────────────────────────
     function confirmReset() {
       openModal('🗑️', 'Factory Reset',
         'This will erase ALL saved settings — network config, stream name, universe, and DMX address. The device will reboot into its default state. This cannot be undone.',
@@ -945,7 +973,6 @@
         liveLogging ? 'Stop Streaming' : 'Start Live Streaming';
     }
 
-    // ── UI helpers ───────────────────────────────────────────────────────────
     function setStatus(state, text) {
       document.getElementById('statusPill').className = 'status-pill ' + state;
       document.getElementById('statusText').textContent = text;
