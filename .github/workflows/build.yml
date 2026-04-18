@@ -31,29 +31,30 @@ jobs:
 
       - name: Compile sketch
         run: |
+          mv Sketch.ino OneFader.ino
           arduino-cli compile \
             --fqbn esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashSize=4M,PartitionScheme=default \
             --export-binaries \
             --output-dir build \
-            Sketch.ino
+            .
 
       - name: Merge bootloader, partition table, and firmware
         run: |
           pip install esptool
           python -m esptool --chip esp32s3 merge_bin \
-            -o build/Sketch.ino.merged.bin \
+            -o build/OneFader.ino.merged.bin \
             --flash_mode dio \
             --flash_freq 80m \
             --flash_size 4MB \
-            0x0000  build/Sketch.ino.bootloader.bin \
-            0x8000  build/Sketch.ino.partitions.bin \
+            0x0000  build/OneFader.ino.bootloader.bin \
+            0x8000  build/OneFader.ino.partitions.bin \
             0xe000  $(find ~/.arduino15 -name "boot_app0.bin" | head -1) \
-            0x10000 build/Sketch.ino.bin
+            0x10000 build/OneFader.ino.bin
 
       - name: Rename binaries for release
         run: |
-          cp build/Sketch.ino.bin         build/onefader-webversion.bin
-          cp build/Sketch.ino.merged.bin  build/OneFader.bin
+          cp build/OneFader.ino.bin         build/onefader-webversion.bin
+          cp build/OneFader.ino.merged.bin  build/OneFader.bin
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
