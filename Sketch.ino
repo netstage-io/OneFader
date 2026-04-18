@@ -695,15 +695,15 @@ static void signetKeyTask(void* /*unused*/) {
     (const uint8_t*)signetPassphrase.c_str(), signetPassphrase.length(),
     k0Salt, 18, 100000, k0);
 
-  // Sender Key = HKDF-Expand: HMAC-SHA256(K0, "Sig-Net-Ks-v1" || 0x01)
-  // Info string confirmed from the working SigNet Tester (constants.js HKDF_INFO.KS).
+  // Sender Key = HKDF-Expand: HMAC-SHA256(K0, "Sig-Net-Sender-v1" || 0x01)
+  // Info string matches constants.js HKDF_INFO.KS = Buffer.from('Sig-Net-Sender-v1').
   // Both the one-shot and context HMAC APIs produce wrong output on ESP32 mbedTLS
   // when the key is 32 bytes (high-entropy). Implement HMAC manually with two plain
   // SHA256 calls instead: HMAC(K,M) = SHA256((K^opad) || SHA256((K^ipad) || M))
   {
-    uint8_t label[14];
-    memcpy(label, "Sig-Net-Ks-v1", 13);
-    label[13] = 0x01;
+    uint8_t label[18];
+    memcpy(label, "Sig-Net-Sender-v1", 17);
+    label[17] = 0x01;
 
     // Build ipad/opad keys: K0 (32 bytes) padded to 64 with zeros, XOR'd
     uint8_t k_ipad[64], k_opad[64];
@@ -722,7 +722,7 @@ static void signetKeyTask(void* /*unused*/) {
       uint8_t inner[32];
       mbedtls_md_starts(&sha);
       mbedtls_md_update(&sha, k_ipad, 64);
-      mbedtls_md_update(&sha, label, 14);
+      mbedtls_md_update(&sha, label, 18);
       mbedtls_md_finish(&sha, inner);
 
       // Ks = SHA256(k_opad || inner)
@@ -797,12 +797,16 @@ void sendSigNet() {
   // Do not send level data until key derivation is complete (PBKDF2 ~30s)
   if (!signetKeyReady || signetPassphrase.length() < 10) return;
 
-  // Build TUID (6-byte MAC) + endpoint 1 → 8-byte Sender-ID
+  // Build 8-byte Sender-ID: [mfgCode(2 BE) | deviceId(4 BE from MAC) | endpoint(2 BE)]
+  // Format matches TUID structure: constants.js _randomSenderId() / SENDER_ID option.
   uint8_t mac[6];
   ETH.macAddress(mac);
   uint8_t senderID[8];
-  memcpy(senderID, mac, 6);
-  senderID[6] = 0x00; senderID[7] = 0x01;  // endpoint 1 = TID_LEVEL data sender
+  senderID[0] = uint8_t(signetMfgCode >> 8);
+  senderID[1] = uint8_t(signetMfgCode & 0xFF);
+  senderID[2] = mac[2]; senderID[3] = mac[3];
+  senderID[4] = mac[4]; senderID[5] = mac[5];
+  senderID[6] = 0x00; senderID[7] = 0x01;  // endpoint 1
 
   uint8_t mfgCode[2] = { uint8_t(signetMfgCode >> 8), uint8_t(signetMfgCode & 0xFF) };
   static const uint8_t secMode    = 0x00;           // HMAC_SHA256
