@@ -2,7 +2,7 @@
 
 OneFader is an open-source hardware device that connects a physical slide potentiometer to a single sACN (E1.31) DMX channel over Ethernet. Built around the Waveshare ESP32-S3-ETH, it is designed for lighting professionals and enthusiasts who need a simple, reliable, standalone fader node — no computer, no driver software, no console required.
 
-Output is configurable as 8-bit (single channel) or 16-bit (coarse/fine across two consecutive channels), making it compatible with any sACN-capable lighting console or software.
+Output is configurable as 8-bit (single channel) or 16-bit (coarse/fine across two consecutive channels), making it compatible with any sACN-capable lighting console or software. In addition to sACN, the device can simultaneously output OSC and Sig-Net (Singularity UK).
 
 ---
 
@@ -38,6 +38,7 @@ Once running, connect the device to your network and navigate to its IP address 
 - **DMX Start Address** — the channel the fader controls (1–512)
 - **16-bit Mode** — uses two consecutive channels (start address = coarse, start address +1 = fine), giving 65,536 steps of resolution instead of 256
 - **sACN Priority** — 0–200, default 100
+- **Per-Address Priority** — sends a DD start code packet so priority only applies to the claimed channel(s) rather than the whole universe. Useful when sharing a universe with other sources.
 - **Unicast Mode** — send directly to a target IP instead of multicast; useful for networks where multicast is restricted or unavailable
 
 ### Fader Control
@@ -45,6 +46,7 @@ Once running, connect the device to your network and navigate to its IP address 
 - **Live Display** — shows the current fader value in real time with a visual bar
 - **Simulation Mode** — replaces the physical fader with an on-screen slider (0–100%), useful for testing without hardware connected. Simulation mode is never saved — the device always boots in hardware mode.
 - **Fader Invert** — reverses the fader direction so fully up = 0 and fully down = full
+- **Lustr Snap** — enables a snap-to-zero behaviour for ETC Lustr fixtures. When the fader is moved rapidly downward while in the low range (approximately 2–20%), the output snaps cleanly to zero rather than fading through. This prevents Lustr fixtures from triggering their internal fade-out. The snap releases as soon as the fader moves back up or reaches zero physically.
 - **Test Mode** — automatically sweeps the output 0→100→0 in a continuous loop, useful for checking fixture response
 
 ### Network Settings
@@ -54,22 +56,57 @@ Once running, connect the device to your network and navigate to its IP address 
 
 ### Input Tuning
 
-These settings control how the raw ADC signal from the fader is processed before being sent as sACN. All values are saved to the device and persist across reboots.
+These settings control how the raw ADC signal from the fader is processed before being sent as output. All values are saved to the device and persist across reboots.
 
 - **EMA Smoothing** — Exponential Moving Average filter applied on top of the moving average. Reduces noise on slow movements. The alpha value (1–100) controls the strength — 1 is maximum smoothing, 100 effectively disables it. Default: enabled, alpha 15.
 - **Spike Rejection** — discards single-sample ADC readings that jump more than the set threshold in one step. Prevents random electrical glitches from reaching the output. Uses a confirmation window — a jump must be consistent across several consecutive samples to be accepted as a real move, so snapping the fader quickly still works. Default: 200 counts. Set to 0 to disable.
 - **Deadband** — minimum change in ADC counts required before the output updates. Prevents the output flickering when the fader is held still due to ADC noise. Default: 30 counts.
+- **DMX Output Range** — clamps the minimum and maximum DMX value the device will ever send, regardless of fader position. Useful for fixtures with a narrow working range or to enforce a floor above zero. Min: 0–254, Max: 1–255.
 
 #### Fader Calibration
 
 The **Calibrate Fader** button opens a dedicated calibration page. Calibration teaches the device the actual physical travel range of your specific potentiometer so the output reliably reaches 0% and 100%.
 
+**Auto-calibration:**
 1. Click **Calibrate Fader**
 2. Move the fader slowly all the way to both ends of its travel
 3. The page shows live min/max ADC values and a progress bar as you move
 4. Click **Save Calibration** when done
 
+**Manual entry:**  
+If you already know the ADC min/max values for your potentiometer, you can type them in directly and click **Set Manual** — no physical movement required. Values are validated (max must be at least 100 counts above min).
+
 A 2-minute countdown is shown on the calibration page. If you navigate away without saving or cancelling, calibration auto-cancels when the timer expires. The saved calibration values (ADC min/max) are shown on the Input Tuning card for reference.
+
+### OSC Output
+
+OneFader can send OSC (Open Sound Control) messages in addition to or instead of sACN. OSC is sent over UDP to a configurable target.
+
+- **OSC Enable** — toggle OSC output on or off. Disabled by default.
+- **Target IP** — the IP address of the OSC receiver (e.g. a media server or lighting console)
+- **Port** — UDP port for OSC, default 8000
+- **Address** — OSC message address string, default `/fader/1`
+- **Format** — the value type carried in the message:
+  - `Float 0.0–1.0` (default) — standard normalised float
+  - `Int 0–100` — percentage integer
+  - `Int 0–255` — 8-bit integer
+  - `Int 0–65535` — 16-bit integer
+- **Interval** — how often OSC messages are sent, 25–10000 ms. Default 25 ms (40 Hz).
+
+### Sig-Net Output
+
+OneFader supports the **Sig-Net** protocol used by Singularity UK lighting control systems. Sig-Net carries sACN-style level data over CoAP/UDP with HMAC-SHA256 packet signing.
+
+- **Sig-Net Enable** — toggle Sig-Net output on or off. Disabled by default.
+- **Universe** — Sig-Net universe number, 1–63999
+- **DMX Start Address** — the channel sent in the Sig-Net payload (1–512)
+- **Scope** — the URI path component that identifies this stream on the network (e.g. `local`, `stage`, `rig-1`). Valid characters: A–Z, a–z, 0–9, `-`, `.`, `_`, `~`. Default: `local`.
+- **Manufacturer Code** — 4-digit hex ESTA manufacturer code identifying the sender. Default: `0000`.
+- **Passphrase** — the shared secret used to sign packets. 10–64 characters; must include at least three of: uppercase, lowercase, digits, symbols. No more than two identical consecutive characters or three sequential characters. The device derives its signing key via PBKDF2-HMAC-SHA256 (100,000 iterations) — key derivation runs in the background on first save and takes approximately 30 seconds.
+- **Unicast Mode** — send Sig-Net packets directly to a target IP instead of multicast.
+- **Interval** — how often Sig-Net packets are sent, 25–10000 ms. Default 25 ms (40 Hz).
+
+Each boot increments a session ID stored in flash, which is included in the signed payload to prevent replay attacks.
 
 ### System Actions
 
@@ -92,6 +129,19 @@ The [OneFader tool](https://onefader.netstage.io) at the same address also conne
 - Flashing firmware via ESP Web Tools
 
 Requires Chrome or Edge. The tool communicates at 115200 baud over the native USB-C CDC port.
+
+### USB Serial Commands
+
+Commands can be sent directly over the serial port at 115200 baud:
+
+| Command | Description |
+|---|---|
+| `STATUS` | Print current configuration |
+| `REBOOT` | Restart the device |
+| `FACTORY_RESET` | Erase all saved settings and reboot |
+| `SET_IP <ip>,<gw>,<subnet>,<dns>` | Configure static IP. Use `_` to skip a field. |
+| `LOG_START` | Begin streaming log output |
+| `LOG_STOP` | Stop streaming log output |
 
 ---
 
@@ -142,7 +192,7 @@ If building from source, the following board settings are required in Arduino ID
 | Setting | Value |
 |---|---|
 | Board | ESP32S3 Dev Module |
-| USB Mode | USB-OTG (TinyUSB) |
+| USB Mode | Hardware CDC and JTAG |
 | USB CDC On Boot | Enabled |
 | Upload Mode | USB-OTG CDC (TinyUSB) |
 
