@@ -1244,7 +1244,7 @@ void setupWebServer() {
           <div class="fg">
             <label>Firmware Update (OTA)</label>
             <input type="file" name="update" accept=".bin">
-            <p style="font-size:0.73rem;color:#aaa;margin-top:3px;">&#9888; Use Sketch.ino.bin (app only)</p>
+            <p style="font-size:0.73rem;color:#aaa;margin-top:3px;">&#9888; Use onefader-webversion.bin</p>
           </div>
           <button type="submit" class="btn bp">Upload Firmware</button>
         </form>
