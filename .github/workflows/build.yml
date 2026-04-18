@@ -1,9 +1,8 @@
 name: Build Firmware
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
   workflow_dispatch:
 
 jobs:
@@ -64,11 +63,10 @@ jobs:
             build/OneFader.bin
             build/onefader-webversion.bin
 
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Upload binaries to release
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
             build/OneFader.bin
             build/onefader-webversion.bin
-          generate_release_notes: true
