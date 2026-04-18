@@ -1,0 +1,74 @@
+name: Build Firmware
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+
+      - name: Install libraries
+        run: |
+          arduino-cli lib install "ESPAsyncWebServer"
+          arduino-cli lib install "AsyncTCP"
+          arduino-cli lib install "sACN"
+
+      - name: Compile sketch
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashSize=4M,PartitionScheme=default \
+            --export-binaries \
+            --output-dir build \
+            Sketch.ino
+
+      - name: Merge bootloader, partition table, and firmware
+        run: |
+          pip install esptool
+          python -m esptool --chip esp32s3 merge_bin \
+            -o build/Sketch.ino.merged.bin \
+            --flash_mode dio \
+            --flash_freq 80m \
+            --flash_size 4MB \
+            0x0000  build/Sketch.ino.bootloader.bin \
+            0x8000  build/Sketch.ino.partitions.bin \
+            0xe000  $(find ~/.arduino15 -name "boot_app0.bin" | head -1) \
+            0x10000 build/Sketch.ino.bin
+
+      - name: Rename binaries for release
+        run: |
+          cp build/Sketch.ino.bin         build/onefader-webversion.bin
+          cp build/Sketch.ino.merged.bin  build/OneFader.bin
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-binaries
+          path: |
+            build/OneFader.bin
+            build/onefader-webversion.bin
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/OneFader.bin
+            build/onefader-webversion.bin
+          generate_release_notes: true
