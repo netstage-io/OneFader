@@ -33,7 +33,7 @@ Preferences preferences;
 String deviceSerial;
 
 // Firmware version
-String firmwareVersion = "v1.7.0";
+String firmwareVersion = "v1.7.1";
 String otaPassword = "netstage";
 String webUsername = "admin";
 String webPassword = "netstage";
