@@ -25,9 +25,9 @@ jobs:
 
       - name: Install libraries
         run: |
-          arduino-cli lib install "ESPAsyncWebServer"
-          arduino-cli lib install "AsyncTCP"
           arduino-cli lib install "sACN"
+          git clone https://github.com/mathieucarbou/AsyncTCP.git       ~/Arduino/libraries/AsyncTCP
+          git clone https://github.com/mathieucarbou/ESPAsyncWebServer.git ~/Arduino/libraries/ESPAsyncWebServer
 
       - name: Compile sketch
         run: |
